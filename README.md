@@ -214,11 +214,11 @@ destination:
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| HTTP GET requests | ✅ | Working |
-| JSON parsing | ✅ | Nested objects supported |
-| SQL transforms | ✅ | Via DataFusion |
-| PostgreSQL output | ✅ | Basic insert/replace |
-| BigQuery output | 🔄 | In progress |
+| HTTP GET requests | 📝 | Planned |
+| JSON parsing | 📝 | Planned |
+| SQL transforms | 📝 | Planned |
+| PostgreSQL output | 📝 | Planned |
+| BigQuery output | 📝 | Planned |
 | ClickHouse output | 📝 | Planned |
 | Pagination | 📝 | Planned |
 | Authentication | 📝 | Planned |
