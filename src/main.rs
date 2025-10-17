@@ -1,5 +1,6 @@
 use apitap::errors::Result;
 use datafusion::common::HashMap;
+use reqwest::RequestBuilder;
 
 pub enum PaginationType{
     Paging,
@@ -11,7 +12,8 @@ pub struct HttpRequest{
     params: Option<HashMap<String,String>>,
     header: Option<HashMap<String,String>>,
     bearer_auth: Option<String>,
-    pagination_type: Option<PaginationType>
+    pagination_type: Option<PaginationType>,
+    data_field:Option<String>
 }
 
 impl HttpRequest {
@@ -22,7 +24,8 @@ impl HttpRequest {
             params: None,
             header: None,
             bearer_auth: None,
-            pagination_type:None
+            pagination_type:None,
+            data_field:None
         }
     }
     pub fn param(&mut self, key: impl Into<String>, value: impl Into<String>) -> &mut Self {
@@ -39,6 +42,11 @@ impl HttpRequest {
 
     pub fn bearer_auth(&mut self,token: impl Into<String>) -> &mut Self {
         self.bearer_auth = Some(token.into());
+        self
+    }
+
+    pub fn data_field(&mut self,field:impl Into<String>) -> &mut Self{
+        self.data_field = Some(field.into());
         self
     }
 
@@ -85,3 +93,6 @@ async fn main() -> Result<()> {
                                 .build();
     Ok(())
 }
+
+
+
