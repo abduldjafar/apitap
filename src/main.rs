@@ -99,7 +99,7 @@ async fn main() -> Result<()> {
     println!("✅ Connected to PostgreSQL");
 
     // 2. Setup HTTP request
-    let http = Http::new("https://paysera.peopleforce.io/api/public/v2/employees")
+    let http = Http::new("https://peopleforce.io/api/public/v2/employees")
         .param("status", "active")
         .param("per_page", "50")
         .header("X-API-KEY", "")
