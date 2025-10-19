@@ -2,7 +2,7 @@ pub type Result<T> = core::result::Result<T, Error>;
 
 #[derive(Clone, Debug)]
 pub enum Error {
-    Datafuison(String),
+    Datafusion(String),
     Io(String),
     Reqwest(String),
     HeaderName(String),
@@ -12,6 +12,7 @@ pub enum Error {
     JoinError(String),
     Arrow(String),
     Parquet(String),
+    SerdeArrow(String)
 }
 
 impl core::fmt::Display for Error {
@@ -30,7 +31,8 @@ crate::impl_from_error!(
     serde_json::Error => SerdeJson,
     sqlx::Error => Sqlx,
     tokio::task::JoinError => JoinError,
-    datafusion::error::DataFusionError => Datafuison,
+    datafusion::error::DataFusionError => Datafusion,
     datafusion::arrow::error::ArrowError => Arrow,
     datafusion::parquet::errors::ParquetError => Parquet,
+    serde_arrow::Error=>SerdeArrow,
 );

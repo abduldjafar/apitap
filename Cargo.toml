@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-datafusion = "50.0.0"
+datafusion = "47.0.0"
 sqlx = { version = "0.8.6", features = ["postgres", "runtime-tokio-rustls", "chrono", "json"] }
 tokio = { version = "1", features = ["full"] }
 async-trait = "0.1"
@@ -24,3 +24,4 @@ async-stream = "0.3"
 tempfile = "3"
 base64 = "0.22.1"
 tokio-stream = "0.1"
+serde_arrow = { version = "0.13.3", features = ["arrow-55"] }
