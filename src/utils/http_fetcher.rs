@@ -3,8 +3,10 @@ use crate::errors::{Error, Result};
 use crate::utils::datafusion_ext::{DataFrameExt, DataWriter, JsonValueExt, QueryResult};
 use async_trait::async_trait;
 use futures::stream::{self, StreamExt};
+use futures::Stream;
 use reqwest::Client;
 use serde_json::Value;
+use std::pin::Pin;
 use std::sync::Arc;
 
 //============================== Page Writer Trait ============================//
@@ -14,6 +16,14 @@ use std::sync::Arc;
 pub trait PageWriter: Send + Sync {
     /// Write a page of data
     async fn write_page(&self, page_number: u64, data: Vec<Value>) -> Result<()>;
+
+    async fn write_page_stream(
+        &self,
+        _page_number: u64,
+        _stream_data: Pin<Box<dyn Stream<Item = Result<Value>> + Send>>,
+    ) -> Result<()> {
+        Ok(())
+    }
 
     /// Handle page fetch errors
     async fn on_page_error(&self, page_number: u64, error: String) -> Result<()> {
@@ -221,6 +231,14 @@ impl DataFusionPageWriter {
 
 #[async_trait]
 impl PageWriter for DataFusionPageWriter {
+    async fn write_page_stream(
+        &self,
+        page_number: u64,
+        stream_data: Pin<Box<dyn Stream<Item = Result<Value>> + Send>>,
+    ) -> Result<()> {
+        Ok(())
+    }
+
     async fn write_page(&self, page_number: u64, data: Vec<Value>) -> Result<()> {
         // Option 1: Process each page immediately
         // (Use this if you want true streaming)

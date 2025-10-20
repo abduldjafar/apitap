@@ -2,7 +2,7 @@
 use async_trait::async_trait;
 use futures::StreamExt;
 use serde_arrow::schema::{SchemaLike, TracingOptions};
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, pin::Pin, sync::Arc};
 use tokio::sync::{OnceCell, RwLock, Semaphore};
 
 use datafusion::{
@@ -15,6 +15,8 @@ use datafusion::{
     },
     prelude::*,
 };
+use futures::Stream;
+use futures::stream;
 
 use crate::errors::{Error, Result};
 
@@ -149,6 +151,14 @@ pub trait DataFrameExt {
         T: serde::de::DeserializeOwned + Send;
 
     async fn to_json(&self) -> Result<serde_json::Value>;
+
+    async fn to_stream(
+        &self,
+    ) -> Result<Pin<Box<dyn Stream<Item = Result<serde_json::Value>> + Send>>> {
+        // Empty stream of items with type Result<serde_json::Value>
+        let s = stream::empty::<Result<serde_json::Value>>();
+        Ok(Box::pin(s))
+    }
 }
 
 #[async_trait]
@@ -180,6 +190,34 @@ impl DataFrameExt for DataFrame {
         }
 
         Ok(out)
+    }
+
+    async fn to_stream(
+        &self,
+    ) -> Result<Pin<Box<dyn Stream<Item = Result<serde_json::Value>> + Send>>> {
+        // Empty stream of items with type Result<serde_json::Value>
+        use datafusion::physical_plan::SendableRecordBatchStream;
+
+        let mut stream: SendableRecordBatchStream = self
+            .clone()
+            .execute_stream()
+            .await
+            .map_err(|e| Error::Datafusion(format!("execute_stream: {e}")))?;
+        
+        let s = async_stream::try_stream! {
+            while let Some(item) = stream.next().await{
+                let batch = item.map_err(|e| Error::Datafusion(format!("stream batch: {e}")))?;
+
+            let rows: Vec<serde_json::Value> =
+                serde_arrow::from_record_batch(&batch)
+                    .map_err(|e| Error::Datafusion(format!("from_record_batch: {e}")))?;
+
+            for v in rows {
+                yield v;
+            }
+            }
+        };
+        Ok(Box::pin(s))
     }
 
     async fn to_json(&self) -> Result<serde_json::Value> {

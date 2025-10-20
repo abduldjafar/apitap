@@ -102,10 +102,7 @@ async fn main() -> Result<()> {
     let http = Http::new("https://peopleforce.io/api/public/v2/employees")
         .param("status", "active")
         .param("per_page", "50")
-        .header(
-            "X-API-KEY",
-            "",
-        )
+        .header("X-API-KEY", "")
         .header("Content-Type", "application/json");
 
     // 3. Setup PostgreSQL writers
