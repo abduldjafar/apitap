@@ -1,8 +1,8 @@
 // src/utils/datafusion_ext.rs
-use std::{collections::HashMap, sync::Arc};
 use async_trait::async_trait;
 use futures::StreamExt;
 use serde_arrow::schema::{SchemaLike, TracingOptions};
+use std::{collections::HashMap, sync::Arc};
 use tokio::sync::{OnceCell, RwLock, Semaphore};
 
 use datafusion::{
@@ -26,14 +26,14 @@ async fn get_shared_context() -> Arc<SessionContext> {
     SHARED_CTX
         .get_or_init(|| async {
             let memory_pool = GreedyMemoryPool::new(256 * 1024 * 1024);
-            let runtime_env = RuntimeEnv::new(
-                RuntimeConfig::new().with_memory_pool(Arc::new(memory_pool))
-            ).expect("Failed to create runtime env");
-            
+            let runtime_env =
+                RuntimeEnv::new(RuntimeConfig::new().with_memory_pool(Arc::new(memory_pool)))
+                    .expect("Failed to create runtime env");
+
             let session_config = SessionConfig::new()
                 .with_target_partitions(1)
                 .with_batch_size(2048);
-            
+
             Arc::new(SessionContext::new_with_config_rt(
                 session_config,
                 Arc::new(runtime_env),
@@ -79,7 +79,7 @@ impl JsonValueExt for serde_json::Value {
         let Self::Array(json_array) = self else {
             return Err(Error::Datafusion("Expected JSON array".into()));
         };
-        
+
         if json_array.is_empty() {
             return Err(Error::Datafusion("Empty JSON array".into()));
         }
@@ -105,7 +105,7 @@ impl JsonValueExt for serde_json::Value {
         let Self::Array(json_array) = self else {
             return Err(Error::Datafusion("Expected JSON array".into()));
         };
-        
+
         if json_array.is_empty() {
             return Err(Error::Datafusion("Empty JSON array".into()));
         }
@@ -123,7 +123,7 @@ impl JsonValueExt for serde_json::Value {
 
         // Cleanup any existing table with same name
         let _ = ctx.deregister_table(table_name);
-        
+
         ctx.register_batch(table_name, batch)
             .map_err(|e| Error::Datafusion(format!("register_batch '{table_name}': {e}")))?;
 
@@ -147,7 +147,7 @@ pub trait DataFrameExt {
     async fn to_vec<T>(&self) -> Result<Vec<T>>
     where
         T: serde::de::DeserializeOwned + Send;
-    
+
     async fn to_json(&self) -> Result<serde_json::Value>;
 }
 
@@ -166,19 +166,19 @@ impl DataFrameExt for DataFrame {
             .map_err(|e| Error::Datafusion(format!("execute_stream: {e}")))?;
 
         let mut out = Vec::<T>::new();
-        
+
         while let Some(item) = stream.next().await {
             let batch = item.map_err(|e| Error::Datafusion(format!("stream batch: {e}")))?;
-            
+
             let vals: Vec<serde_json::Value> = serde_arrow::from_record_batch(&batch)
                 .map_err(|e| Error::Datafusion(format!("from_record_batch: {e}")))?;
-            
+
             let chunk: Vec<T> = serde_json::from_value(serde_json::Value::Array(vals))
                 .map_err(|e| Error::Datafusion(format!("json→Vec<T>: {e}")))?;
-            
+
             out.extend(chunk);
         }
-        
+
         Ok(out)
     }
 
@@ -192,16 +192,16 @@ impl DataFrameExt for DataFrame {
             .map_err(|e| Error::Datafusion(format!("execute_stream: {e}")))?;
 
         let mut rows = Vec::<serde_json::Value>::new();
-        
+
         while let Some(item) = stream.next().await {
             let batch = item.map_err(|e| Error::Datafusion(format!("stream batch: {e}")))?;
-            
+
             let mut vals: Vec<serde_json::Value> = serde_arrow::from_record_batch(&batch)
                 .map_err(|e| Error::Datafusion(format!("from_record_batch: {e}")))?;
-            
+
             rows.append(&mut vals);
         }
-        
+
         Ok(serde_json::Value::Array(rows))
     }
 }
@@ -228,23 +228,23 @@ pub struct QueryError {
 pub trait DataWriter: Send + Sync {
     /// Write query result to destination
     async fn write(&self, result: QueryResult) -> Result<()>;
-    
+
     /// Handle query errors (optional override)
     async fn on_error(&self, error: QueryError) -> Result<()> {
         eprintln!("❌ Error in {}: {}", error.table_name, error.error);
         Ok(())
     }
-    
+
     /// Called before processing starts (optional override)
     async fn begin(&self) -> Result<()> {
         Ok(())
     }
-    
+
     /// Called after all queries complete successfully (optional override)
     async fn commit(&self) -> Result<()> {
         Ok(())
     }
-    
+
     /// Called on failure (optional override)
     async fn rollback(&self) -> Result<()> {
         Ok(())
@@ -283,10 +283,10 @@ impl TableQuery {
 pub struct BatchQueryConfig {
     /// Number of concurrent queries to execute
     pub concurrency: usize,
-    
+
     /// Show progress logs
     pub show_progress: bool,
-    
+
     /// Continue processing on errors or stop
     pub continue_on_error: bool,
 }
@@ -347,16 +347,16 @@ impl DataPipeline {
     }
 
     /// Execute queries with per-table writers (streaming, minimal memory)
-    pub async fn execute(
-        &self,
-        queries: Vec<TableQuery>,
-    ) -> Result<PipelineStats> {
+    pub async fn execute(&self, queries: Vec<TableQuery>) -> Result<PipelineStats> {
         let total = queries.len();
         let sem = Arc::new(Semaphore::new(self.config.concurrency));
         let stats = Arc::new(RwLock::new(PipelineStats::new()));
 
         if self.config.show_progress {
-            println!("🚀 Processing {} queries (concurrency: {})", total, self.config.concurrency);
+            println!(
+                "🚀 Processing {} queries (concurrency: {})",
+                total, self.config.concurrency
+            );
         }
 
         // Get unique writers and call begin()
@@ -456,7 +456,7 @@ impl DataPipeline {
                             }
                         }
                     }
-                    
+
                     Ok::<_, Error>(())
                 }));
             }
@@ -525,7 +525,8 @@ impl QueryBuilder {
         sql: impl Into<String>,
         writer: Arc<dyn DataWriter>,
     ) -> Self {
-        self.queries.push(TableQuery::new(table_name, data, sql, writer));
+        self.queries
+            .push(TableQuery::new(table_name, data, sql, writer));
         self
     }
 
@@ -538,7 +539,8 @@ impl QueryBuilder {
     ) -> Self {
         for (name, data) in tables {
             let sql = sql_template(&name);
-            self.queries.push(TableQuery::new(name, data, sql, writer.clone()));
+            self.queries
+                .push(TableQuery::new(name, data, sql, writer.clone()));
         }
         self
     }
@@ -550,7 +552,8 @@ impl QueryBuilder {
         writer: Arc<dyn DataWriter>,
     ) -> Self {
         for (name, data, sql) in queries {
-            self.queries.push(TableQuery::new(name, data, sql, writer.clone()));
+            self.queries
+                .push(TableQuery::new(name, data, sql, writer.clone()));
         }
         self
     }
@@ -575,10 +578,7 @@ pub struct JsonFileWriter {
 impl DataWriter for JsonFileWriter {
     async fn write(&self, result: QueryResult) -> Result<()> {
         let path = self.output_dir.join(format!("{}.json", result.table_name));
-        tokio::fs::write(
-            path,
-            serde_json::to_string_pretty(&result.data)?
-        ).await?;
+        tokio::fs::write(path, serde_json::to_string_pretty(&result.data)?).await?;
         Ok(())
     }
 }
@@ -607,7 +607,9 @@ impl PostgresWriter {
 #[async_trait]
 impl DataWriter for PostgresWriter {
     async fn write(&self, result: QueryResult) -> Result<()> {
-        let rows = result.data.as_array()
+        let rows = result
+            .data
+            .as_array()
             .ok_or_else(|| Error::Datafusion("Expected array".into()))?;
 
         for row in rows {
@@ -623,13 +625,17 @@ impl DataWriter for PostgresWriter {
     }
 
     async fn begin(&self) -> Result<()> {
-        sqlx::query("BEGIN").execute(&self.pool).await
+        sqlx::query("BEGIN")
+            .execute(&self.pool)
+            .await
             .map_err(|e| Error::Datafusion(format!("BEGIN: {e}")))?;
         Ok(())
     }
 
     async fn commit(&self) -> Result<()> {
-        sqlx::query("COMMIT").execute(&self.pool).await
+        sqlx::query("COMMIT")
+            .execute(&self.pool)
+            .await
             .map_err(|e| Error::Datafusion(format!("COMMIT: {e}")))?;
         Ok(())
     }

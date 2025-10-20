@@ -12,7 +12,7 @@ pub enum Error {
     JoinError(String),
     Arrow(String),
     Parquet(String),
-    SerdeArrow(String)
+    SerdeArrow(String),
 }
 
 impl core::fmt::Display for Error {

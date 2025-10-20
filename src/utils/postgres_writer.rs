@@ -1,11 +1,11 @@
 // src/utils/postgres_writer.rs
 
-use async_trait::async_trait;
-use sqlx::{PgPool, types::Json};
-use serde_json::Value;
-use std::collections::BTreeMap;
 use crate::errors::{Error, Result};
 use crate::utils::datafusion_ext::{DataWriter, QueryResult};
+use async_trait::async_trait;
+use serde_json::Value;
+use sqlx::{PgPool, types::Json};
+use std::collections::BTreeMap;
 
 //=============== Type Definitions ============================================//
 
@@ -104,7 +104,7 @@ impl PostgresAutoColumnsWriter {
                 SELECT FROM information_schema.tables 
                 WHERE table_schema = 'public' 
                 AND table_name = $1
-            )"
+            )",
         )
         .bind(&self.table_name)
         .fetch_one(&self.pool)
@@ -142,10 +142,7 @@ impl PostgresAutoColumnsWriter {
         Ok(final_types)
     }
 
-    async fn create_table_from_schema(
-        &self,
-        schema: &BTreeMap<String, PgType>,
-    ) -> Result<()> {
+    async fn create_table_from_schema(&self, schema: &BTreeMap<String, PgType>) -> Result<()> {
         if schema.is_empty() {
             return Err(Error::Datafusion("No columns detected".to_string()));
         }
@@ -193,7 +190,9 @@ impl PostgresAutoColumnsWriter {
         let schema = if !self.table_exists().await? {
             if self.auto_create {
                 if sample_rows.is_empty() {
-                    return Err(Error::Datafusion("Need sample data to create table".to_string()));
+                    return Err(Error::Datafusion(
+                        "Need sample data to create table".to_string(),
+                    ));
                 }
                 let detected_schema = Self::analyze_schema(sample_rows, self.sample_size)?;
                 self.create_table_from_schema(&detected_schema).await?;
@@ -216,17 +215,17 @@ impl PostgresAutoColumnsWriter {
         Ok(schema)
     }
 
-    async fn insert_batch(
-        &self,
-        rows: &[Value],
-        schema: &BTreeMap<String, PgType>,
-    ) -> Result<()> {
+    async fn insert_batch(&self, rows: &[Value], schema: &BTreeMap<String, PgType>) -> Result<()> {
         if rows.is_empty() {
             return Ok(());
         }
 
         let columns: Vec<&String> = schema.keys().collect();
-        let columns_str = columns.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ");
+        let columns_str = columns
+            .iter()
+            .map(|s| s.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
         let values_per_row = columns.len();
 
         let mut placeholders = Vec::new();
@@ -280,6 +279,10 @@ impl PostgresAutoColumnsWriter {
     ) -> Result<sqlx::query::Query<'q, sqlx::Postgres, sqlx::postgres::PgArguments>> {
         let result = match (value, expected_type) {
             // Null
+            (Value::Null, PgType::BigInt) => query.bind::<Option<i64>>(None),
+            (Value::Null, PgType::Double) => query.bind::<Option<f64>>(None),
+            (Value::Null, PgType::Boolean) => query.bind::<Option<bool>>(None),
+            (Value::Null, PgType::Jsonb) => query.bind(Json(Value::Null)),
             (Value::Null, _) => query.bind::<Option<String>>(None),
 
             // Boolean
@@ -303,8 +306,8 @@ impl PostgresAutoColumnsWriter {
                 }
             }
             (Value::Number(n), PgType::Text) => query.bind(n.to_string()),
-            (Value::Number(n), PgType::Jsonb) => query.bind(Json(value)),
-            (Value::Number(n), _) => query.bind(n.to_string()),
+            (Value::Number(_), PgType::Jsonb) => query.bind(Json(value)),
+            (Value::Number(_), _) => query.bind::<Option<f64>>(None),
 
             // Strings
             (Value::String(s), PgType::Text) => query.bind(s.as_str()),
@@ -331,7 +334,7 @@ impl PostgresAutoColumnsWriter {
                 query.bind(b)
             }
 
-            // Arrays/Objects
+            // Arrays / Objects
             (Value::Array(_), PgType::Jsonb) | (Value::Object(_), PgType::Jsonb) => {
                 query.bind(Json(value))
             }
@@ -365,7 +368,6 @@ impl DataWriter for PostgresAutoColumnsWriter {
             self.insert_batch(chunk, &schema).await?;
         }
 
-        println!("✅ Inserted {} rows into {}", result.row_count, self.table_name);
         Ok(())
     }
 

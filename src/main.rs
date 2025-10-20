@@ -1,17 +1,17 @@
 // src/main.rs
 
-use std::sync::Arc;
 use apitap::{
     errors::Result,
     utils::{
         datafusion_ext::{DataFrameExt, JsonValueExt},
         http_fetcher::{DataFusionPageWriter, PaginatedFetcher},
-        postgres_writer::{PostgresAutoColumnsWriter},
+        postgres_writer::PostgresAutoColumnsWriter,
     },
 };
 use datafusion::common::HashMap;
 use reqwest::Client;
 use sqlx::PgPool;
+use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct Http {
@@ -102,27 +102,28 @@ async fn main() -> Result<()> {
     let http = Http::new("https://peopleforce.io/api/public/v2/employees")
         .param("status", "active")
         .param("per_page", "50")
-        .header("X-API-KEY", "")
+        .header(
+            "X-API-KEY",
+            "",
+        )
         .header("Content-Type", "application/json");
 
     // 3. Setup PostgreSQL writers
-    
+
     // ✅ Auto-detect ALL columns from data (recommended!)
     let pg_writer_all_columns = Arc::new(
         PostgresAutoColumnsWriter::new(pool.clone(), "employees")
             .with_batch_size(50)
             .with_sample_size(10)
-            .auto_create(true)
+            .auto_create(true),
     );
 
-
-
     // 4. Setup page writers
-    
+
     // All columns as structured fields
     let page_writer_all = Arc::new(DataFusionPageWriter::new(
         "employees",
-        "SELECT * FROM employees",  // ✅ All columns auto-detected!
+        "SELECT * FROM employees", // ✅ All columns auto-detected!
         pg_writer_all_columns,
     ));
 

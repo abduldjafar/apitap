@@ -1,11 +1,11 @@
 // src/utils/http_fetcher.rs
+use crate::errors::{Error, Result};
+use crate::utils::datafusion_ext::{DataFrameExt, DataWriter, JsonValueExt, QueryResult};
 use async_trait::async_trait;
 use futures::stream::{self, StreamExt};
 use reqwest::Client;
 use serde_json::Value;
 use std::sync::Arc;
-use crate::errors::{Error, Result};
-use crate::utils::datafusion_ext::{DataWriter, QueryResult, JsonValueExt, DataFrameExt};
 
 //============================== Page Writer Trait ============================//
 
@@ -14,18 +14,18 @@ use crate::utils::datafusion_ext::{DataWriter, QueryResult, JsonValueExt, DataFr
 pub trait PageWriter: Send + Sync {
     /// Write a page of data
     async fn write_page(&self, page_number: u64, data: Vec<Value>) -> Result<()>;
-    
+
     /// Handle page fetch errors
     async fn on_page_error(&self, page_number: u64, error: String) -> Result<()> {
         eprintln!("❌ Error fetching page {}: {}", page_number, error);
         Ok(())
     }
-    
+
     /// Called before fetching starts
     async fn begin(&self) -> Result<()> {
         Ok(())
     }
-    
+
     /// Called after all pages complete
     async fn commit(&self) -> Result<()> {
         Ok(())
@@ -57,14 +57,12 @@ impl PaginatedFetcher {
     }
 
     /// Fetch all pages and stream to writer (NO memory accumulation!)
-    pub async fn fetch_to_writer<W: PageWriter>(
-        &self,
-        writer: Arc<W>,
-    ) -> Result<FetchStats> {
+    pub async fn fetch_to_writer<W: PageWriter>(&self, writer: Arc<W>) -> Result<FetchStats> {
         writer.begin().await?;
 
         // 1. Fetch first page to get total pages
-        let first: Value = self.client
+        let first: Value = self
+            .client
             .get(&self.base_url)
             .query(&[(&self.page_param_name, "1")])
             .send()
@@ -119,14 +117,19 @@ impl PaginatedFetcher {
                     {
                         Ok(resp) => match resp.json::<Value>().await {
                             Ok(json) => {
-                                if let Some(data) = json.pointer("/data").and_then(|v| v.as_array()).cloned() {
+                                if let Some(data) =
+                                    json.pointer("/data").and_then(|v| v.as_array()).cloned()
+                                {
                                     let count = data.len();
-                                    
+
                                     // Write immediately - NO accumulation!
                                     match writer.write_page(page, data).await {
                                         Ok(_) => {
                                             stats.write().await.add_page(page, count);
-                                            println!("✅ Page {}/{} - {} items", page, total_pages, count);
+                                            println!(
+                                                "✅ Page {}/{} - {} items",
+                                                page, total_pages, count
+                                            );
                                         }
                                         Err(e) => {
                                             stats.write().await.add_error(page);
@@ -147,7 +150,7 @@ impl PaginatedFetcher {
                     }
                 }
             })
-            .buffer_unordered(self.concurrency)  // Max N concurrent requests
+            .buffer_unordered(self.concurrency) // Max N concurrent requests
             .collect::<Vec<_>>()
             .await;
 
@@ -222,18 +225,20 @@ impl PageWriter for DataFusionPageWriter {
         // Option 1: Process each page immediately
         // (Use this if you want true streaming)
         use crate::utils::datafusion_ext::JsonValueExt;
-        
+
         let json_array = Value::Array(data);
         let sdf = json_array.to_sql(&self.table_name, &self.sql).await?;
         let result_json = sdf.inner().to_json().await?;
-        
+
         let row_count = result_json.as_array().map(|a| a.len()).unwrap_or(0);
-        
-        self.final_writer.write(QueryResult {
-            table_name: format!("{}_page_{}", self.table_name, page_number),
-            data: result_json,
-            row_count,
-        }).await?;
+
+        self.final_writer
+            .write(QueryResult {
+                table_name: format!("{}_page_{}", self.table_name, page_number),
+                data: result_json,
+                row_count,
+            })
+            .await?;
 
         Ok(())
     }
@@ -272,7 +277,7 @@ impl BatchedPageWriter {
 
     async fn flush(&self) -> Result<()> {
         use crate::utils::datafusion_ext::JsonValueExt;
-        
+
         let mut buffer = self.buffer.write().await;
         if buffer.is_empty() {
             return Ok(());
@@ -281,14 +286,16 @@ impl BatchedPageWriter {
         let json_array = Value::Array(buffer.drain(..).collect());
         let sdf = json_array.to_sql(&self.table_name, &self.sql).await?;
         let result_json = sdf.inner().to_json().await?;
-        
+
         let row_count = result_json.as_array().map(|a| a.len()).unwrap_or(0);
-        
-        self.final_writer.write(QueryResult {
-            table_name: self.table_name.clone(),
-            data: result_json,
-            row_count,
-        }).await?;
+
+        self.final_writer
+            .write(QueryResult {
+                table_name: self.table_name.clone(),
+                data: result_json,
+                row_count,
+            })
+            .await?;
 
         Ok(())
     }
