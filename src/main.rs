@@ -104,7 +104,7 @@ async fn main() -> Result<()> {
         .param("per_page", "50")
         .header(
             "X-API-KEY",
-            "EofpqPNU5dn2uN81yb9RMb4xXjB8iTLE7yNZVUsQmCyF3Bj12PTR",
+            "",
         )
         .header("Content-Type", "application/json");
 
