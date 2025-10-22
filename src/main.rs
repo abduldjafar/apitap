@@ -93,23 +93,26 @@ impl Http {
 async fn main() -> Result<()> {
     // 1. Connect to PostgreSQL
     let database_url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://poatgres:poatgres@localhost/employee_activity".to_string());
+        .unwrap_or_else(|_| "postgres://postgres:postgres@localhost/postgres".to_string());
 
     let pool = PgPool::connect(&database_url).await?;
     println!("✅ Connected to PostgreSQL");
 
     // 2. Setup HTTP request
-    let http = Http::new("https://peopleforce.io/api/public/v2/employees")
+    let http = Http::new("https://paysera.peopleforce.io/api/public/v2/employees")
         .param("status", "active")
         .param("per_page", "50")
-        .header("X-API-KEY", "")
+        .header(
+            "X-API-KEY",
+            "EofpqPNU5dn2uN81yb9RMb4xXjB8iTLE7yNZVUsQmCyF3Bj12PTR",
+        )
         .header("Content-Type", "application/json");
 
     // 3. Setup PostgreSQL writers
 
     // ✅ Auto-detect ALL columns from data (recommended!)
     let pg_writer_all_columns = Arc::new(
-        PostgresAutoColumnsWriter::new(pool.clone(), "employees")
+        PostgresAutoColumnsWriter::new(pool.clone(), "employees_2")
             .with_batch_size(50)
             .with_sample_size(10)
             .auto_create(true),
@@ -119,8 +122,8 @@ async fn main() -> Result<()> {
 
     // All columns as structured fields
     let page_writer_all = Arc::new(DataFusionPageWriter::new(
-        "employees",
-        "SELECT * FROM employees", // ✅ All columns auto-detected!
+        "employees_2",
+        "SELECT email,employee_number FROM employees_2", // ✅ All columns auto-detected!
         pg_writer_all_columns,
     ));
 

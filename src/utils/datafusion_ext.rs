@@ -1,8 +1,9 @@
 // src/utils/datafusion_ext.rs
+
 use async_trait::async_trait;
-use futures::StreamExt;
+use futures::{stream, Stream, StreamExt};
 use serde_arrow::schema::{SchemaLike, TracingOptions};
-use std::{collections::HashMap, pin::Pin, sync::Arc};
+use std::{pin::Pin, sync::Arc};
 use tokio::sync::{OnceCell, RwLock, Semaphore};
 
 use datafusion::{
@@ -15,22 +16,25 @@ use datafusion::{
     },
     prelude::*,
 };
-use futures::Stream;
-use futures::stream;
 
 use crate::errors::{Error, Result};
 
-//=========================== Shared SessionContext ===========================//
+// =========================== Shared SessionContext ========================== //
 
 static SHARED_CTX: OnceCell<Arc<SessionContext>> = OnceCell::const_new();
+
+/// Stream of JSON rows (`Result<Value>`) boxed + pinned for dynamic dispatch.
+pub type JsonStreamType =
+    Pin<Box<dyn Stream<Item = Result<serde_json::Value>> + Send + 'static>>;
 
 async fn get_shared_context() -> Arc<SessionContext> {
     SHARED_CTX
         .get_or_init(|| async {
             let memory_pool = GreedyMemoryPool::new(256 * 1024 * 1024);
-            let runtime_env =
-                RuntimeEnv::new(RuntimeConfig::new().with_memory_pool(Arc::new(memory_pool)))
-                    .expect("Failed to create runtime env");
+            let runtime_env = RuntimeEnv::new(
+                RuntimeConfig::new().with_memory_pool(Arc::new(memory_pool)),
+            )
+            .expect("Failed to create runtime env");
 
             let session_config = SessionConfig::new()
                 .with_target_partitions(1)
@@ -45,7 +49,7 @@ async fn get_shared_context() -> Arc<SessionContext> {
         .clone()
 }
 
-//========================= RAII for temp table cleanup =======================//
+// ========================= RAII for temp table cleanup ====================== //
 
 pub struct SqlDataFrame {
     df: DataFrame,
@@ -54,6 +58,7 @@ pub struct SqlDataFrame {
 }
 
 impl SqlDataFrame {
+    #[inline]
     pub fn inner(&self) -> &DataFrame {
         &self.df
     }
@@ -65,7 +70,7 @@ impl Drop for SqlDataFrame {
     }
 }
 
-//============================= JSON → DF / SQL ===============================//
+// ============================= JSON → DF / SQL ============================== //
 
 #[async_trait]
 pub trait JsonValueExt {
@@ -81,7 +86,6 @@ impl JsonValueExt for serde_json::Value {
         let Self::Array(json_array) = self else {
             return Err(Error::Datafusion("Expected JSON array".into()));
         };
-
         if json_array.is_empty() {
             return Err(Error::Datafusion("Empty JSON array".into()));
         }
@@ -94,8 +98,9 @@ impl JsonValueExt for serde_json::Value {
         )
         .map_err(|e| Error::Datafusion(format!("from_samples: {e}")))?;
 
-        let batch: RecordBatch = serde_arrow::to_record_batch(&fields, json_array)
-            .map_err(|e| Error::Datafusion(format!("to_record_batch: {e}")))?;
+        let batch: RecordBatch =
+            serde_arrow::to_record_batch(&fields, json_array)
+                .map_err(|e| Error::Datafusion(format!("to_record_batch: {e}")))?;
 
         ctx.read_batch(batch)
             .map_err(|e| Error::Datafusion(format!("read_batch: {e}")))
@@ -107,7 +112,6 @@ impl JsonValueExt for serde_json::Value {
         let Self::Array(json_array) = self else {
             return Err(Error::Datafusion("Expected JSON array".into()));
         };
-
         if json_array.is_empty() {
             return Err(Error::Datafusion("Empty JSON array".into()));
         }
@@ -120,10 +124,11 @@ impl JsonValueExt for serde_json::Value {
         )
         .map_err(|e| Error::Datafusion(format!("from_samples: {e}")))?;
 
-        let batch: RecordBatch = serde_arrow::to_record_batch(&fields, json_array)
-            .map_err(|e| Error::Datafusion(format!("to_record_batch: {e}")))?;
+        let batch: RecordBatch =
+            serde_arrow::to_record_batch(&fields, json_array)
+                .map_err(|e| Error::Datafusion(format!("to_record_batch: {e}")))?;
 
-        // Cleanup any existing table with same name
+        // Best-effort cleanup of any existing table with the same name.
         let _ = ctx.deregister_table(table_name);
 
         ctx.register_batch(table_name, batch)
@@ -134,15 +139,11 @@ impl JsonValueExt for serde_json::Value {
             .await
             .map_err(|e| Error::Datafusion(format!("sql planning: {e}")))?;
 
-        Ok(SqlDataFrame {
-            df,
-            ctx,
-            table_name: table_name.to_string(),
-        })
+        Ok(SqlDataFrame { df, ctx, table_name: table_name.to_string() })
     }
 }
 
-//============================= DF → JSON / Vec<T> ============================//
+// ============================= DF → JSON / Vec<T> =========================== //
 
 #[async_trait]
 pub trait DataFrameExt {
@@ -152,12 +153,9 @@ pub trait DataFrameExt {
 
     async fn to_json(&self) -> Result<serde_json::Value>;
 
-    async fn to_stream(
-        &self,
-    ) -> Result<Pin<Box<dyn Stream<Item = Result<serde_json::Value>> + Send>>> {
-        // Empty stream of items with type Result<serde_json::Value>
-        let s = stream::empty::<Result<serde_json::Value>>();
-        Ok(Box::pin(s))
+    async fn to_stream(&self) -> Result<JsonStreamType> {
+        // Default: empty stream
+        Ok(Box::pin(stream::empty::<Result<serde_json::Value>>()))
     }
 }
 
@@ -169,74 +167,64 @@ impl DataFrameExt for DataFrame {
     {
         use datafusion::physical_plan::SendableRecordBatchStream;
 
-        let mut stream: SendableRecordBatchStream = self
+        let mut rb_stream: SendableRecordBatchStream = self
             .clone()
             .execute_stream()
             .await
             .map_err(|e| Error::Datafusion(format!("execute_stream: {e}")))?;
 
         let mut out = Vec::<T>::new();
-
-        while let Some(item) = stream.next().await {
+        while let Some(item) = rb_stream.next().await {
             let batch = item.map_err(|e| Error::Datafusion(format!("stream batch: {e}")))?;
-
             let vals: Vec<serde_json::Value> = serde_arrow::from_record_batch(&batch)
                 .map_err(|e| Error::Datafusion(format!("from_record_batch: {e}")))?;
-
             let chunk: Vec<T> = serde_json::from_value(serde_json::Value::Array(vals))
                 .map_err(|e| Error::Datafusion(format!("json→Vec<T>: {e}")))?;
-
             out.extend(chunk);
         }
-
         Ok(out)
     }
 
-    async fn to_stream(
-        &self,
-    ) -> Result<Pin<Box<dyn Stream<Item = Result<serde_json::Value>> + Send>>> {
-        // Empty stream of items with type Result<serde_json::Value>
+    async fn to_stream(&self) -> Result<JsonStreamType> {
         use datafusion::physical_plan::SendableRecordBatchStream;
 
-        let mut stream: SendableRecordBatchStream = self
+        let mut rb_stream: SendableRecordBatchStream = self
             .clone()
             .execute_stream()
             .await
             .map_err(|e| Error::Datafusion(format!("execute_stream: {e}")))?;
-        
+
         let s = async_stream::try_stream! {
-            while let Some(item) = stream.next().await{
+            while let Some(item) = rb_stream.next().await {
                 let batch = item.map_err(|e| Error::Datafusion(format!("stream batch: {e}")))?;
 
-            let rows: Vec<serde_json::Value> =
-                serde_arrow::from_record_batch(&batch)
-                    .map_err(|e| Error::Datafusion(format!("from_record_batch: {e}")))?;
+                let rows: Vec<serde_json::Value> =
+                    serde_arrow::from_record_batch(&batch)
+                        .map_err(|e| Error::Datafusion(format!("from_record_batch: {e}")))?;
 
-            for v in rows {
-                yield v;
-            }
+                for v in rows {
+                    yield v;
+                }
             }
         };
+
         Ok(Box::pin(s))
     }
 
     async fn to_json(&self) -> Result<serde_json::Value> {
         use datafusion::physical_plan::SendableRecordBatchStream;
 
-        let mut stream: SendableRecordBatchStream = self
+        let mut rb_stream: SendableRecordBatchStream = self
             .clone()
             .execute_stream()
             .await
             .map_err(|e| Error::Datafusion(format!("execute_stream: {e}")))?;
 
         let mut rows = Vec::<serde_json::Value>::new();
-
-        while let Some(item) = stream.next().await {
+        while let Some(item) = rb_stream.next().await {
             let batch = item.map_err(|e| Error::Datafusion(format!("stream batch: {e}")))?;
-
             let mut vals: Vec<serde_json::Value> = serde_arrow::from_record_batch(&batch)
                 .map_err(|e| Error::Datafusion(format!("from_record_batch: {e}")))?;
-
             rows.append(&mut vals);
         }
 
@@ -244,14 +232,20 @@ impl DataFrameExt for DataFrame {
     }
 }
 
-//============================== Writer Trait =================================//
+// ============================== Writer Types ================================ //
 
-/// Result of a successful query execution
+/// Result of a successful query execution (in-memory)
 #[derive(Debug, Clone)]
 pub struct QueryResult {
     pub table_name: String,
     pub data: serde_json::Value,
     pub row_count: usize,
+}
+
+/// Result of a successful query execution (streaming)
+pub struct QueryResultStream {
+    pub table_name: String,
+    pub data: JsonStreamType,
 }
 
 /// Query execution error
@@ -261,37 +255,33 @@ pub struct QueryError {
     pub error: String,
 }
 
-/// Writer trait - implement for PostgreSQL, ClickHouse, Files, etc.
+// =============================== Writer Trait =============================== //
+
 #[async_trait]
 pub trait DataWriter: Send + Sync {
-    /// Write query result to destination
+    /// Write query result to destination (in-memory).
     async fn write(&self, result: QueryResult) -> Result<()>;
 
-    /// Handle query errors (optional override)
+    /// Write query result to destination (streaming).
+    async fn write_stream(&self, _result: QueryResultStream) -> Result<()> {
+        Ok(())
+    }
+
+    /// Handle query errors.
     async fn on_error(&self, error: QueryError) -> Result<()> {
         eprintln!("❌ Error in {}: {}", error.table_name, error.error);
         Ok(())
     }
 
-    /// Called before processing starts (optional override)
-    async fn begin(&self) -> Result<()> {
-        Ok(())
-    }
-
-    /// Called after all queries complete successfully (optional override)
-    async fn commit(&self) -> Result<()> {
-        Ok(())
-    }
-
-    /// Called on failure (optional override)
-    async fn rollback(&self) -> Result<()> {
-        Ok(())
-    }
+    /// Lifecycle hooks.
+    async fn begin(&self) -> Result<()> { Ok(()) }
+    async fn commit(&self) -> Result<()> { Ok(()) }
+    async fn rollback(&self) -> Result<()> { Ok(()) }
 }
 
-//======================== Query with Per-Table Writer ========================//
+// ====================== Query with Per-Table Writer ========================= //
 
-/// A query with its data source, SQL, and destination writer
+/// A query with its data source, SQL, and destination writer.
 pub struct TableQuery {
     pub table_name: String,
     pub data: serde_json::Value,
@@ -306,42 +296,28 @@ impl TableQuery {
         sql: impl Into<String>,
         writer: Arc<dyn DataWriter>,
     ) -> Self {
-        Self {
-            table_name: table_name.into(),
-            data,
-            sql: sql.into(),
-            writer,
-        }
+        Self { table_name: table_name.into(), data, sql: sql.into(), writer }
     }
 }
 
-//============================== Pipeline Config ==============================//
+// ============================= Pipeline Config ============================== //
 
-/// Configuration for batch query processing
+/// Configuration for batch query processing.
 pub struct BatchQueryConfig {
-    /// Number of concurrent queries to execute
     pub concurrency: usize,
-
-    /// Show progress logs
     pub show_progress: bool,
-
-    /// Continue processing on errors or stop
     pub continue_on_error: bool,
 }
 
 impl Default for BatchQueryConfig {
     fn default() -> Self {
-        Self {
-            concurrency: 4,
-            show_progress: true,
-            continue_on_error: true,
-        }
+        Self { concurrency: 4, show_progress: true, continue_on_error: true }
     }
 }
 
-//============================== Pipeline Stats ===============================//
+// ============================== Pipeline Stats ============================== //
 
-/// Statistics from pipeline execution
+/// Statistics from pipeline execution.
 #[derive(Debug, Clone)]
 pub struct PipelineStats {
     pub success_count: usize,
@@ -351,30 +327,16 @@ pub struct PipelineStats {
 
 impl PipelineStats {
     fn new() -> Self {
-        Self {
-            success_count: 0,
-            error_count: 0,
-            total_rows: 0,
-        }
+        Self { success_count: 0, error_count: 0, total_rows: 0 }
     }
-
-    fn success(&mut self, rows: usize) {
-        self.success_count += 1;
-        self.total_rows += rows;
-    }
-
-    fn error(&mut self) {
-        self.error_count += 1;
-    }
-
-    fn completed(&self) -> usize {
-        self.success_count + self.error_count
-    }
+    fn success(&mut self, rows: usize) { self.success_count += 1; self.total_rows += rows; }
+    fn error(&mut self) { self.error_count += 1; }
+    fn completed(&self) -> usize { self.success_count + self.error_count }
 }
 
-//============================= Pipeline Execution ============================//
+// ============================= Pipeline Execution =========================== //
 
-/// Data processing pipeline
+/// Data processing pipeline.
 pub struct DataPipeline {
     config: BatchQueryConfig,
 }
@@ -384,34 +346,29 @@ impl DataPipeline {
         Self { config }
     }
 
-    /// Execute queries with per-table writers (streaming, minimal memory)
+    /// Execute queries with per-table writers (streaming, minimal memory).
     pub async fn execute(&self, queries: Vec<TableQuery>) -> Result<PipelineStats> {
         let total = queries.len();
         let sem = Arc::new(Semaphore::new(self.config.concurrency));
         let stats = Arc::new(RwLock::new(PipelineStats::new()));
 
         if self.config.show_progress {
-            println!(
-                "🚀 Processing {} queries (concurrency: {})",
-                total, self.config.concurrency
-            );
+            println!("🚀 Processing {} queries (concurrency: {})", total, self.config.concurrency);
         }
 
-        // Get unique writers and call begin()
+        // Begin all unique writers.
         let unique_writers = Self::get_unique_writers(&queries);
         for writer in &unique_writers {
             writer.begin().await?;
         }
 
-        // Process queries in chunks to avoid spawning too many tasks
+        // Process queries in chunks to avoid spawning too many tasks.
         let chunk_size = self.config.concurrency * 2;
         let mut query_iter = queries.into_iter();
 
         loop {
             let chunk: Vec<_> = query_iter.by_ref().take(chunk_size).collect();
-            if chunk.is_empty() {
-                break;
-            }
+            if chunk.is_empty() { break; }
 
             let mut handles = Vec::with_capacity(chunk.len());
 
@@ -425,70 +382,53 @@ impl DataPipeline {
                     let _permit = sem.acquire().await.unwrap();
 
                     match q.data.to_sql(&q.table_name, &q.sql).await {
-                        Ok(sdf) => {
-                            match sdf.inner().to_json().await {
-                                Ok(json) => {
-                                    let n = json.as_array().map(|a| a.len()).unwrap_or(0);
+                        Ok(sdf) => match sdf.inner().to_json().await {
+                            Ok(json) => {
+                                let n = json.as_array().map(|a| a.len()).unwrap_or(0);
 
-                                    let result = QueryResult {
-                                        table_name: q.table_name.clone(),
-                                        data: json,
-                                        row_count: n,
-                                    };
+                                let result = QueryResult {
+                                    table_name: q.table_name.clone(),
+                                    data: json,
+                                    row_count: n,
+                                };
 
-                                    // Write immediately to destination
-                                    match q.writer.write(result).await {
-                                        Ok(_) => {
-                                            stats.write().await.success(n);
-                                            if show {
-                                                let s = stats.read().await;
-                                                println!(
-                                                    "✅ [{}/{}] {} - {} rows",
-                                                    s.completed(),
-                                                    total,
-                                                    q.table_name,
-                                                    n
-                                                );
-                                            }
-                                        }
-                                        Err(e) => {
-                                            stats.write().await.error();
-                                            if show {
-                                                eprintln!(
-                                                    "❌ Write failed for {}: {}",
-                                                    q.table_name, e
-                                                );
-                                            }
-                                            if !continue_on_error {
-                                                return Err(e);
-                                            }
+                                match q.writer.write(result).await {
+                                    Ok(_) => {
+                                        stats.write().await.success(n);
+                                        if show {
+                                            let s = stats.read().await;
+                                            println!("✅ [{}/{}] {} - {} rows",
+                                                s.completed(), total, q.table_name, n);
                                         }
                                     }
-                                }
-                                Err(e) => {
-                                    stats.write().await.error();
-                                    let _ = q
-                                        .writer
-                                        .on_error(QueryError {
-                                            table_name: q.table_name.clone(),
-                                            error: format!("to_json: {e}"),
-                                        })
-                                        .await;
-                                    if show {
-                                        eprintln!("❌ Query failed for {}: {}", q.table_name, e);
+                                    Err(e) => {
+                                        stats.write().await.error();
+                                        if show {
+                                            eprintln!("❌ Write failed for {}: {}", q.table_name, e);
+                                        }
+                                        if !continue_on_error {
+                                            return Err(e);
+                                        }
                                     }
                                 }
                             }
-                        }
+                            Err(e) => {
+                                stats.write().await.error();
+                                let _ = q.writer.on_error(QueryError {
+                                    table_name: q.table_name.clone(),
+                                    error: format!("to_json: {e}"),
+                                }).await;
+                                if show {
+                                    eprintln!("❌ Query failed for {}: {}", q.table_name, e);
+                                }
+                            }
+                        },
                         Err(e) => {
                             stats.write().await.error();
-                            let _ = q
-                                .writer
-                                .on_error(QueryError {
-                                    table_name: q.table_name.clone(),
-                                    error: format!("query: {e}"),
-                                })
-                                .await;
+                            let _ = q.writer.on_error(QueryError {
+                                table_name: q.table_name.clone(),
+                                error: format!("query: {e}"),
+                            }).await;
                             if show {
                                 eprintln!("❌ Query failed for {}: {}", q.table_name, e);
                             }
@@ -499,16 +439,16 @@ impl DataPipeline {
                 }));
             }
 
-            // Wait for chunk to complete
+            // Wait for chunk to complete.
             for h in handles {
                 let _ = h.await;
             }
 
-            // Small delay between chunks
+            // Small delay between chunks.
             tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
         }
 
-        // Commit all writers
+        // Commit all writers.
         for writer in &unique_writers {
             writer.commit().await?;
         }
@@ -525,7 +465,7 @@ impl DataPipeline {
         Ok(final_stats)
     }
 
-    /// Get unique writers from queries (for begin/commit)
+    /// Get unique writers from queries (for begin/commit).
     fn get_unique_writers(queries: &[TableQuery]) -> Vec<Arc<dyn DataWriter>> {
         let mut unique = Vec::new();
         let mut seen = std::collections::HashSet::new();
@@ -541,21 +481,18 @@ impl DataPipeline {
     }
 }
 
-//=============================== Query Builder ===============================//
+// ============================== Query Builder =============================== //
 
-/// Builder for constructing query pipelines
+/// Builder for constructing query pipelines.
 pub struct QueryBuilder {
     queries: Vec<TableQuery>,
 }
 
 impl QueryBuilder {
     pub fn new() -> Self {
-        Self {
-            queries: Vec::new(),
-        }
+        Self { queries: Vec::new() }
     }
 
-    /// Add a single query with its writer
     pub fn add_query(
         mut self,
         table_name: impl Into<String>,
@@ -563,12 +500,10 @@ impl QueryBuilder {
         sql: impl Into<String>,
         writer: Arc<dyn DataWriter>,
     ) -> Self {
-        self.queries
-            .push(TableQuery::new(table_name, data, sql, writer));
+        self.queries.push(TableQuery::new(table_name, data, sql, writer));
         self
     }
 
-    /// Add multiple queries with SQL template and shared writer
     pub fn add_queries_with_template(
         mut self,
         tables: Vec<(String, serde_json::Value)>,
@@ -577,26 +512,22 @@ impl QueryBuilder {
     ) -> Self {
         for (name, data) in tables {
             let sql = sql_template(&name);
-            self.queries
-                .push(TableQuery::new(name, data, sql, writer.clone()));
+            self.queries.push(TableQuery::new(name, data, sql, writer.clone()));
         }
         self
     }
 
-    /// Add multiple queries with individual SQL and shared writer
     pub fn add_queries(
         mut self,
         queries: Vec<(String, serde_json::Value, String)>,
         writer: Arc<dyn DataWriter>,
     ) -> Self {
         for (name, data, sql) in queries {
-            self.queries
-                .push(TableQuery::new(name, data, sql, writer.clone()));
+            self.queries.push(TableQuery::new(name, data, sql, writer.clone()));
         }
         self
     }
 
-    /// Execute the pipeline
     pub async fn execute(self, config: BatchQueryConfig) -> Result<PipelineStats> {
         DataPipeline::new(config).execute(self.queries).await
     }
@@ -608,17 +539,12 @@ impl Default for QueryBuilder {
     }
 }
 
+// ============================== Example Writers ============================ //
+
+use sqlx::PgPool;
+
 pub struct JsonFileWriter {
     output_dir: std::path::PathBuf,
-}
-
-#[async_trait]
-impl DataWriter for JsonFileWriter {
-    async fn write(&self, result: QueryResult) -> Result<()> {
-        let path = self.output_dir.join(format!("{}.json", result.table_name));
-        tokio::fs::write(path, serde_json::to_string_pretty(&result.data)?).await?;
-        Ok(())
-    }
 }
 
 impl JsonFileWriter {
@@ -630,7 +556,14 @@ impl JsonFileWriter {
     }
 }
 
-use sqlx::PgPool;
+#[async_trait]
+impl DataWriter for JsonFileWriter {
+    async fn write(&self, result: QueryResult) -> Result<()> {
+        let path = self.output_dir.join(format!("{}.json", result.table_name));
+        tokio::fs::write(path, serde_json::to_string_pretty(&result.data)?).await?;
+        Ok(())
+    }
+}
 
 pub struct PostgresWriter {
     pool: PgPool,
@@ -644,6 +577,17 @@ impl PostgresWriter {
 
 #[async_trait]
 impl DataWriter for PostgresWriter {
+    async fn write_stream(&self, mut result: QueryResultStream) -> Result<()> {
+        while let Some(item) = result.data.next().await {
+            sqlx::query("INSERT INTO my_table (data) VALUES ($1)")
+                .bind(item?.to_string()) // enable `sqlx` JSON feature to bind Value directly
+                .execute(&self.pool)
+                .await
+                .map_err(|e| Error::Datafusion(format!("PG write: {e}")))?;
+        }
+        Ok(())
+    }
+
     async fn write(&self, result: QueryResult) -> Result<()> {
         let rows = result
             .data
@@ -651,14 +595,12 @@ impl DataWriter for PostgresWriter {
             .ok_or_else(|| Error::Datafusion("Expected array".into()))?;
 
         for row in rows {
-            // Your insert logic
             sqlx::query("INSERT INTO my_table (data) VALUES ($1)")
-                .bind(row.to_string())
+                .bind(row.to_string()) // see note above
                 .execute(&self.pool)
                 .await
                 .map_err(|e| Error::Datafusion(format!("PG write: {e}")))?;
         }
-
         Ok(())
     }
 

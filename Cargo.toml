@@ -25,3 +25,5 @@ tempfile = "3"
 base64 = "0.22.1"
 tokio-stream = "0.1"
 serde_arrow = { version = "0.13.3", features = ["arrow-55"] }
+dotenvy = "0.15"
+

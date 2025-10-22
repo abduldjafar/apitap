@@ -1,9 +1,11 @@
 // src/utils/http_fetcher.rs
 use crate::errors::{Error, Result};
-use crate::utils::datafusion_ext::{DataFrameExt, DataWriter, JsonValueExt, QueryResult};
+use crate::utils::datafusion_ext::{
+    DataFrameExt, DataWriter, JsonValueExt, QueryResult, QueryResultStream,
+};
 use async_trait::async_trait;
-use futures::stream::{self, StreamExt};
 use futures::Stream;
+use futures::stream::{self, StreamExt};
 use reqwest::Client;
 use serde_json::Value;
 use std::pin::Pin;
@@ -67,7 +69,7 @@ impl PaginatedFetcher {
     }
 
     /// Fetch all pages and stream to writer (NO memory accumulation!)
-    pub async fn fetch_to_writer<W: PageWriter>(&self, writer: Arc<W>) -> Result<FetchStats> {
+    pub async fn fetch_to_writer(&self, writer: Arc<impl PageWriter>) -> Result<FetchStats> {
         writer.begin().await?;
 
         // 1. Fetch first page to get total pages
@@ -246,15 +248,12 @@ impl PageWriter for DataFusionPageWriter {
 
         let json_array = Value::Array(data);
         let sdf = json_array.to_sql(&self.table_name, &self.sql).await?;
-        let result_json = sdf.inner().to_json().await?;
-
-        let row_count = result_json.as_array().map(|a| a.len()).unwrap_or(0);
+        let result_json = sdf.inner().to_stream().await?;
 
         self.final_writer
-            .write(QueryResult {
+            .write_stream(QueryResultStream {
                 table_name: format!("{}_page_{}", self.table_name, page_number),
                 data: result_json,
-                row_count,
             })
             .await?;
 
