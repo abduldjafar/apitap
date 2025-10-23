@@ -4,12 +4,82 @@ use crate::utils::datafusion_ext::{
     DataFrameExt, DataWriter, JsonValueExt, QueryResult, QueryResultStream,
 };
 use async_trait::async_trait;
-use futures::Stream;
-use futures::stream::{self, StreamExt};
+use futures::{Stream, TryStreamExt};
+use futures::stream::{self, BoxStream, StreamExt};
 use reqwest::Client;
 use serde_json::Value;
+use std::io;
 use std::pin::Pin;
 use std::sync::Arc;
+use tokio_util::{io::StreamReader, codec::{FramedRead, LinesCodec}};
+
+
+pub async fn ndjson_stream_page(
+    client: &reqwest::Client,
+    url: &str,
+    page_param: &str,
+    page: u64,
+) -> Result<BoxStream<'static, Result<Value>>> {
+    let resp = client
+        .get(url)
+        .query(&[(page_param, &page.to_string())])
+        .send()
+        .await
+        .map_err(|e| Error::Reqwest(e.to_string()))?
+        .error_for_status()
+        .map_err(|e| Error::Reqwest(e.to_string()))?;
+
+    // reqwest stream -> AsyncRead -> lines
+    let byte_stream = resp
+        .bytes_stream()
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, e));
+    let reader = StreamReader::new(byte_stream);
+
+    // If you want to cap max line length:
+    // let lines = FramedRead::new(reader, LinesCodec::new_with_max_length(1_000_000));
+    let mut lines = FramedRead::new(reader, LinesCodec::new());
+
+    // Build a streaming adapter that can yield multiple items per line.
+    let s = async_stream::try_stream! {
+        while let Some(line_res) = lines.next().await {
+            let line = line_res.map_err(|e| Error::Io(e.to_string()))?;
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+
+            let v: Value = serde_json::from_str(trimmed)
+                .map_err(|e| Error::SerdeJson(e.to_string()))?;
+
+            // Prefer /data if present
+            if let Some(inner) = v.pointer("/data") {
+                if let Some(arr) = inner.as_array() {
+                    for item in arr {
+                        // clone since serde_json::Value is owned
+                        yield item.clone();
+                    }
+                } else if !inner.is_null() {
+                    yield inner.clone();
+                }
+                // if /data is null or missing, fall through to handle v itself
+                else {
+                    // nothing to yield from /data
+                }
+            } else {
+                // No /data wrapper; if the whole line is an array, flatten it
+                if let Some(arr) = v.as_array() {
+                    for item in arr {
+                        yield item.clone();
+                    }
+                } else {
+                    yield v;
+                }
+            }
+        }
+    };
+
+    Ok(s.boxed())
+}
 
 //============================== Page Writer Trait ============================//
 
@@ -69,83 +139,113 @@ impl PaginatedFetcher {
     }
 
     /// Fetch all pages and stream to writer (NO memory accumulation!)
-    pub async fn fetch_to_writer(&self, writer: Arc<impl PageWriter>) -> Result<FetchStats> {
+   pub async fn fetch_to_writer(&self, writer: Arc<dyn PageWriter + Send + Sync>) -> Result<FetchStats> {
+        
+        const BATCH_SIZE: usize = 256; // tune for your sink throughput
+
         writer.begin().await?;
 
-        // 1. Fetch first page to get total pages
-        let first: Value = self
-            .client
+        // 1) Discover total_pages from page 1 (JSON-with-metadata)
+        let first: Value = self.client
             .get(&self.base_url)
             .query(&[(&self.page_param_name, "1")])
-            .send()
-            .await
+            .send().await
             .map_err(|e| Error::Reqwest(e.to_string()))?
             .error_for_status()
             .map_err(|e| Error::Reqwest(e.to_string()))?
-            .json()
-            .await
+            .json().await
             .map_err(|e| Error::Reqwest(e.to_string()))?;
-
-        let first_data = first
-            .pointer("/data")
-            .and_then(|v| v.as_array())
-            .cloned()
-            .unwrap_or_default();
 
         let total_pages = first
             .pointer("/metadata/pagination/pages")
             .and_then(|v| v.as_u64())
             .unwrap_or(1);
 
-        println!("📄 Total pages: {}", total_pages);
+        println!("📄 Total pages: {total_pages}");
 
         let stats = Arc::new(tokio::sync::RwLock::new(FetchStats::new()));
 
-        // Write first page immediately
-        let first_count = first_data.len();
-        writer.write_page(1, first_data).await?;
-        stats.write().await.add_page(1, first_count);
+        // If first page also exposes a data array (non-NDJSON), write it now (optional)
+        if let Some(arr) = first.pointer("/data").and_then(|v| v.as_array()).cloned() {
+            let n = arr.len();
+            writer.write_page(1, arr).await?;
+            stats.write().await.add_page(1, n);
+        } else {
+            // Or stream page 1 as NDJSON if the endpoint supports it:
+            let mut s = ndjson_stream_page(&self.client, &self.base_url, &self.page_param_name, 1)
+                .await
+                .map_err(|e| Error::Reqwest(e.to_string()))?;
+            let mut buf = Vec::with_capacity(BATCH_SIZE);
+            while let Some(item) = s.next().await {
+                match item {
+                    Ok(v) => {
+                        buf.push(v);
+                        if buf.len() == BATCH_SIZE {
+                            let count = buf.len();
+                            let out = std::mem::take(&mut buf);
+                            writer.write_page(1, out).await?;
+                            stats.write().await.add_page(1, count);
+                        }
+                    }
+                    Err(e) => {
+                        stats.write().await.add_error(1);
+                        let _ = writer.on_page_error(1, e.to_string()).await;
+                    }
+                }
+            }
+            if !buf.is_empty() {
+                let count = buf.len();
+                let out = std::mem::take(&mut buf);
+                writer.write_page(1, out).await?;
+                stats.write().await.add_page(1, count);
+            }
+        }
 
         if total_pages <= 1 {
             writer.commit().await?;
             return Ok(stats.read().await.clone());
         }
 
-        // 2. Fetch remaining pages concurrently and stream to writer
+        // 2) Stream remaining pages concurrently (true pagination: 2..=total_pages)
+        let client = self.client.clone();
+        let url = self.base_url.clone();
+        let page_param = self.page_param_name.clone();
+        let stats_ref = Arc::clone(&stats);
+        let writer_tasks = Arc::clone(&writer);
+
         stream::iter(2..=total_pages)
-            .map(|page| {
-                let client = self.client.clone();
-                let url = self.base_url.clone();
-                let param_name = self.page_param_name.clone();
-                let writer = writer.clone();
-                let stats = stats.clone();
+            .map(move |page| {
+                let client = client.clone();
+                let url = url.clone();
+                let page_param = page_param.clone();
+                let writer = Arc::clone(&writer_tasks);
+                let stats = Arc::clone(&stats_ref);
 
                 async move {
-                    match client
-                        .get(&url)
-                        .query(&[(param_name.as_str(), &page.to_string())])
-                        .send()
-                        .await
-                    {
-                        Ok(resp) => match resp.json::<Value>().await {
-                            Ok(json) => {
-                                if let Some(data) =
-                                    json.pointer("/data").and_then(|v| v.as_array()).cloned()
-                                {
-                                    let count = data.len();
+                    let stream_res = ndjson_stream_page(&client, &url, &page_param, page).await;
+                    let mut s = match stream_res {
+                        Ok(s) => s,
+                        Err(e) => {
+                            stats.write().await.add_error(page);
+                            let _ = writer.on_page_error(page, e.to_string()).await;
+                            return;
+                        }
+                    };
 
-                                    // Write immediately - NO accumulation!
-                                    match writer.write_page(page, data).await {
-                                        Ok(_) => {
-                                            stats.write().await.add_page(page, count);
-                                            println!(
-                                                "✅ Page {}/{} - {} items",
-                                                page, total_pages, count
-                                            );
-                                        }
+                    let mut buf = Vec::with_capacity(BATCH_SIZE);
+                    while let Some(item) = s.next().await {
+                        match item {
+                            Ok(v) => {
+                                buf.push(v);
+                                if buf.len() == 50 {
+                                    let count = buf.len();
+                                    let out = std::mem::take(&mut buf);
+                                    
+                                    match writer.write_page(page, out).await {
+                                        Ok(_) => stats.write().await.add_page(page, count),
                                         Err(e) => {
                                             stats.write().await.add_error(page);
-                                            eprintln!("❌ Write failed for page {}: {}", page, e);
+                                            let _ = writer.on_page_error(page, e.to_string()).await;
                                         }
                                     }
                                 }
@@ -154,27 +254,32 @@ impl PaginatedFetcher {
                                 stats.write().await.add_error(page);
                                 let _ = writer.on_page_error(page, e.to_string()).await;
                             }
-                        },
-                        Err(e) => {
-                            stats.write().await.add_error(page);
-                            let _ = writer.on_page_error(page, e.to_string()).await;
                         }
                     }
+
+                    if !buf.is_empty() {
+                        let count = buf.len();
+                        let out = std::mem::take(&mut buf);
+                        match writer.write_page(page, out).await {
+                            Ok(_) => stats.write().await.add_page(page, count),
+                            Err(e) => {
+                                stats.write().await.add_error(page);
+                                let _ = writer.on_page_error(page, e.to_string()).await;
+                            }
+                        }
+                    }
+
+                    //println!("✅ Page {page}/{total_pages} streamed");
                 }
             })
-            .buffer_unordered(self.concurrency) // Max N concurrent requests
+            .buffer_unordered(self.concurrency)
             .collect::<Vec<_>>()
             .await;
 
+        // 3) Finish
         writer.commit().await?;
 
-        let final_stats = stats.read().await.clone();
-        println!("\n🎉 Fetch completed:");
-        println!("   ✅ Success: {} pages", final_stats.success_count);
-        println!("   ❌ Errors: {} pages", final_stats.error_count);
-        println!("   📊 Total items: {}", final_stats.total_items);
-
-        Ok(final_stats)
+        Ok(stats.read().await.clone())
     }
 }
 
@@ -248,7 +353,8 @@ impl PageWriter for DataFusionPageWriter {
 
         let json_array = Value::Array(data);
         let sdf = json_array.to_sql(&self.table_name, &self.sql).await?;
-        let result_json = sdf.inner().to_stream().await?;
+        let mut result_json = sdf.inner().to_stream().await?;
+
 
         self.final_writer
             .write_stream(QueryResultStream {
@@ -256,6 +362,7 @@ impl PageWriter for DataFusionPageWriter {
                 data: result_json,
             })
             .await?;
+
 
         Ok(())
     }

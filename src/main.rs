@@ -99,7 +99,7 @@ async fn main() -> Result<()> {
     println!("✅ Connected to PostgreSQL");
 
     // 2. Setup HTTP request
-    let http = Http::new("https://paysera.peopleforce.io/api/public/v2/employees")
+    let http = Http::new("https://peopleforce.io/api/public/v2/employees")
         .param("status", "active")
         .param("per_page", "50")
         .header(
@@ -111,19 +111,29 @@ async fn main() -> Result<()> {
     // 3. Setup PostgreSQL writers
 
     // ✅ Auto-detect ALL columns from data (recommended!)
-    let pg_writer_all_columns = Arc::new(
-        PostgresAutoColumnsWriter::new(pool.clone(), "employees_2")
+
+    let pg_writer_config = PostgresAutoColumnsWriter::new(pool.clone(), "employees_3")
             .with_batch_size(50)
             .with_sample_size(10)
-            .auto_create(true),
+            .auto_create(true)
+            .auto_truncate(true);
+    
+    if pg_writer_config.auto_truncate{
+        pg_writer_config.truncate().await?;
+
+    }
+    
+    
+    let pg_writer_all_columns = Arc::new(
+       pg_writer_config
     );
 
     // 4. Setup page writers
 
     // All columns as structured fields
     let page_writer_all = Arc::new(DataFusionPageWriter::new(
-        "employees_2",
-        "SELECT email,employee_number FROM employees_2", // ✅ All columns auto-detected!
+        "employees_3",
+        "SELECT * FROM employees_3", // ✅ All columns auto-detected!
         pg_writer_all_columns,
     ));
 

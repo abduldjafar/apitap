@@ -1,10 +1,11 @@
 // src/utils/postgres_writer.rs
 
 use crate::errors::{Error, Result};
-use crate::utils::datafusion_ext::{DataWriter, QueryResult};
+use crate::utils::datafusion_ext::{DataWriter, QueryResult, QueryResultStream};
 use async_trait::async_trait;
 use serde_json::Value;
 use sqlx::{PgPool, types::Json};
+use tokio_stream::StreamExt;
 use std::collections::BTreeMap;
 
 //=============== Type Definitions ============================================//
@@ -66,6 +67,7 @@ pub struct PostgresAutoColumnsWriter {
     batch_size: usize,
     sample_size: usize,
     auto_create: bool,
+    pub auto_truncate:bool,
     table_created: tokio::sync::RwLock<bool>,
     columns_cache: tokio::sync::RwLock<Option<BTreeMap<String, PgType>>>,
 }
@@ -78,6 +80,7 @@ impl PostgresAutoColumnsWriter {
             batch_size: 100,
             sample_size: 10,
             auto_create: true,
+            auto_truncate:false,
             table_created: tokio::sync::RwLock::new(false),
             columns_cache: tokio::sync::RwLock::new(None),
         }
@@ -95,6 +98,11 @@ impl PostgresAutoColumnsWriter {
 
     pub fn auto_create(mut self, enabled: bool) -> Self {
         self.auto_create = enabled;
+        self
+    }
+
+    pub fn auto_truncate(mut self, enabled: bool) -> Self {
+        self.auto_truncate = enabled;
         self
     }
 
@@ -215,6 +223,18 @@ impl PostgresAutoColumnsWriter {
         Ok(schema)
     }
 
+    pub async fn truncate(&self) -> Result<()>{
+        println!("Truncating {}...",self.table_name);
+         let query = format!(
+            "TRUNCATE {}",
+            self.table_name
+        );
+         sqlx::query(&query)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| Error::Sqlx(format!("TRUNCATE: {}", e)))?;
+        Ok(())
+    }
     async fn insert_batch(&self, rows: &[Value], schema: &BTreeMap<String, PgType>) -> Result<()> {
         if rows.is_empty() {
             return Ok(());
@@ -352,6 +372,40 @@ impl PostgresAutoColumnsWriter {
 
 #[async_trait]
 impl DataWriter for PostgresAutoColumnsWriter {
+    async fn write_stream(&self, mut result: QueryResultStream) -> Result<()> {
+
+        let mut buf: Vec<serde_json::Value> = Vec::with_capacity(self.batch_size);
+        let mut schema: Option<BTreeMap<String, PgType>> = None; // whatever type your ensure_table returns
+
+
+        while let Some(item) = result.data.next().await {
+            let v = item?; // serde_json::Value
+
+            buf.push(v);
+
+            if buf.len() >= self.batch_size {
+                // Initialize schema/table once, using the first batch
+                if schema.is_none() {
+                    schema = Some(self.ensure_table(&buf).await?);
+                }
+
+                // Insert this batch
+                self.insert_batch(&buf, schema.as_ref().unwrap()).await?;
+                buf.clear();
+            }
+        }
+
+        // Flush remaining
+        if !buf.is_empty() {
+            if schema.is_none() {
+                schema = Some(self.ensure_table(&buf).await?);
+            }
+            self.insert_batch(&buf, schema.as_ref().unwrap()).await?;
+        }
+
+        Ok(())
+    }
+
     async fn write(&self, result: QueryResult) -> Result<()> {
         let rows = result
             .data
