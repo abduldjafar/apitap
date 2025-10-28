@@ -3,11 +3,11 @@ use crate::errors::{Error, Result};
 use crate::utils::datafusion_ext::{
     DataFrameExt, DataWriter, JsonValueExt, QueryResult, QueryResultStream,
 };
-use reqwest::header::CONTENT_TYPE;
 use async_trait::async_trait;
-use futures::stream::{self, BoxStream, StreamExt, TryStreamExt};
 use futures::Stream;
+use futures::stream::{self, BoxStream, StreamExt, TryStreamExt};
 use reqwest::Client;
+use reqwest::header::CONTENT_TYPE;
 use serde_json::Value;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -45,9 +45,12 @@ pub async fn ndjson_stream_qs(
 
     if !is_ndjson {
         // -------- Regular JSON (object or array) path --------
-        let bytes = resp.bytes().await.map_err(|e| Error::Reqwest(e.to_string()))?;
-        let v: Value = serde_json::from_slice(&bytes)
-            .map_err(|e| Error::SerdeJson(e.to_string()))?;
+        let bytes = resp
+            .bytes()
+            .await
+            .map_err(|e| Error::Reqwest(e.to_string()))?;
+        let v: Value =
+            serde_json::from_slice(&bytes).map_err(|e| Error::SerdeJson(e.to_string()))?;
 
         // If data_path is provided, drill into it; else use the whole value.
         let target = if let Some(p) = data_path {
@@ -128,18 +131,33 @@ pub trait PageWriter: Send + Sync {
         Ok(())
     }
 
-    async fn begin(&self) -> Result<()> { Ok(()) }
-    async fn commit(&self) -> Result<()> { Ok(()) }
+    async fn begin(&self) -> Result<()> {
+        Ok(())
+    }
+    async fn commit(&self) -> Result<()> {
+        Ok(())
+    }
 }
 
 // =========================== Pagination types ================================
 
 #[derive(Debug, Clone)]
 pub enum Pagination {
-    LimitOffset { limit_param: String, offset_param: String },
-    PageNumber  { page_param: String,  per_page_param: String },
-    PageOnly    { page_param: String },
-    Cursor      { cursor_param: String, page_size_param: Option<String> },
+    LimitOffset {
+        limit_param: String,
+        offset_param: String,
+    },
+    PageNumber {
+        page_param: String,
+        per_page_param: String,
+    },
+    PageOnly {
+        page_param: String,
+    },
+    Cursor {
+        cursor_param: String,
+        page_size_param: Option<String>,
+    },
     Default,
 }
 
@@ -220,21 +238,33 @@ impl PaginatedFetcher {
         writer: Arc<dyn PageWriter>,
     ) -> Result<FetchStats> {
         let (limit_param, offset_param) = match &self.pagination_config {
-            Pagination::LimitOffset { limit_param, offset_param } =>
-                (limit_param.clone(), offset_param.clone()),
-            _ => return Err(Error::Reqwest("Pagination::LimitOffset not configured".into())),
+            Pagination::LimitOffset {
+                limit_param,
+                offset_param,
+            } => (limit_param.clone(), offset_param.clone()),
+            _ => {
+                return Err(Error::Reqwest(
+                    "Pagination::LimitOffset not configured".into(),
+                ));
+            }
         };
 
         writer.begin().await?;
 
         // ---- First request (offset=0) as JSON to read totals; also process it ----
-        let first_json: Value = self.client
+        let first_json: Value = self
+            .client
             .get(&self.base_url)
             .query(&[(limit_param.as_str(), limit.to_string())])
             .query(&[(offset_param.as_str(), "0")])
-            .send().await.map_err(|e| Error::Reqwest(e.to_string()))?
-            .error_for_status().map_err(|e| Error::Reqwest(e.to_string()))?
-            .json().await.map_err(|e| Error::Reqwest(e.to_string()))?;
+            .send()
+            .await
+            .map_err(|e| Error::Reqwest(e.to_string()))?
+            .error_for_status()
+            .map_err(|e| Error::Reqwest(e.to_string()))?
+            .json()
+            .await
+            .map_err(|e| Error::Reqwest(e.to_string()))?;
 
         let mut stats = FetchStats::new();
 
@@ -258,17 +288,18 @@ impl PaginatedFetcher {
                     (offset_param.clone(), "0".into()),
                 ],
                 data_path,
-            ).await?;
-            self.write_streamed_page(0, &mut s, &*writer, &mut stats).await?;
+            )
+            .await?;
+            self.write_streamed_page(0, &mut s, &*writer, &mut stats)
+                .await?;
         }
 
         // Determine total pages if possible
         let pages_opt = match total_hint {
-            Some(TotalHint::Items { ref pointer }) => {
-                first_json.pointer(pointer).and_then(|v| v.as_u64()).map(|total_items| {
-                    (total_items + limit - 1) / limit
-                })
-            }
+            Some(TotalHint::Items { ref pointer }) => first_json
+                .pointer(pointer)
+                .and_then(|v| v.as_u64())
+                .map(|total_items| (total_items + limit - 1) / limit),
             Some(TotalHint::Pages { ref pointer }) => {
                 first_json.pointer(pointer).and_then(|v| v.as_u64())
             }
@@ -315,21 +346,33 @@ impl PaginatedFetcher {
         writer: Arc<dyn PageWriter>,
     ) -> Result<FetchStats> {
         let (page_param, per_page_param) = match &self.pagination_config {
-            Pagination::PageNumber { page_param, per_page_param } =>
-                (page_param.clone(), per_page_param.clone()),
-            _ => return Err(Error::Reqwest("Pagination::PageNumber not configured".into())),
+            Pagination::PageNumber {
+                page_param,
+                per_page_param,
+            } => (page_param.clone(), per_page_param.clone()),
+            _ => {
+                return Err(Error::Reqwest(
+                    "Pagination::PageNumber not configured".into(),
+                ));
+            }
         };
 
         writer.begin().await?;
 
         // First request as JSON (page=1)
-        let first_json: Value = self.client
+        let first_json: Value = self
+            .client
             .get(&self.base_url)
             .query(&[(page_param.as_str(), "1".to_string())])
             .query(&[(per_page_param.as_str(), per_page.to_string())])
-            .send().await.map_err(|e| Error::Reqwest(e.to_string()))?
-            .error_for_status().map_err(|e| Error::Reqwest(e.to_string()))?
-            .json().await.map_err(|e| Error::Reqwest(e.to_string()))?;
+            .send()
+            .await
+            .map_err(|e| Error::Reqwest(e.to_string()))?
+            .error_for_status()
+            .map_err(|e| Error::Reqwest(e.to_string()))?
+            .json()
+            .await
+            .map_err(|e| Error::Reqwest(e.to_string()))?;
 
         let mut stats = FetchStats::new();
 
@@ -352,17 +395,18 @@ impl PaginatedFetcher {
                     (per_page_param.clone(), per_page.to_string()),
                 ],
                 data_path,
-            ).await?;
-            self.write_streamed_page(1, &mut s, &*writer, &mut stats).await?;
+            )
+            .await?;
+            self.write_streamed_page(1, &mut s, &*writer, &mut stats)
+                .await?;
         }
 
         // Determine total pages
         let pages_opt = match total_hint {
-            Some(TotalHint::Items { ref pointer }) => {
-                first_json.pointer(pointer).and_then(|v| v.as_u64()).map(|total_items| {
-                    (total_items + per_page - 1) / per_page
-                })
-            }
+            Some(TotalHint::Items { ref pointer }) => first_json
+                .pointer(pointer)
+                .and_then(|v| v.as_u64())
+                .map(|total_items| (total_items + per_page - 1) / per_page),
             Some(TotalHint::Pages { ref pointer }) => {
                 first_json.pointer(pointer).and_then(|v| v.as_u64())
             }
@@ -397,7 +441,9 @@ impl PaginatedFetcher {
                                 (per_page_param, per_page.to_string()),
                             ],
                             data_path.as_deref(),
-                        ).await {
+                        )
+                        .await
+                        {
                             Ok(s) => s,
                             Err(e) => {
                                 let _ = writer.on_page_error(page, e.to_string()).await;
@@ -445,7 +491,9 @@ impl PaginatedFetcher {
                         (per_page_param.clone(), per_page.to_string()),
                     ],
                     data_path,
-                ).await {
+                )
+                .await
+                {
                     Ok(s) => s,
                     Err(e) => {
                         let _ = writer.on_page_error(page, e.to_string()).await;
@@ -453,8 +501,12 @@ impl PaginatedFetcher {
                     }
                 };
 
-                let wrote = self.write_streamed_page(page, &mut s, &*writer, &mut stats).await?;
-                if wrote == 0 { break; } // stop on empty page
+                let wrote = self
+                    .write_streamed_page(page, &mut s, &*writer, &mut stats)
+                    .await?;
+                if wrote == 0 {
+                    break;
+                } // stop on empty page
                 page += 1;
             }
         }
@@ -540,7 +592,9 @@ impl PaginatedFetcher {
                             (offset_param, offset.to_string()),
                         ],
                         data_path.as_deref(),
-                    ).await {
+                    )
+                    .await
+                    {
                         Ok(s) => s,
                         Err(e) => {
                             let _ = writer.on_page_error(i, e.to_string()).await;
@@ -600,7 +654,9 @@ impl PaginatedFetcher {
                     (offset_param.to_string(), offset.to_string()),
                 ],
                 data_path,
-            ).await {
+            )
+            .await
+            {
                 Ok(s) => s,
                 Err(e) => {
                     writer.on_page_error(i, e.to_string()).await?;
@@ -609,7 +665,9 @@ impl PaginatedFetcher {
             };
 
             let wrote = self.write_streamed_page(i, &mut s, &*writer, stats).await?;
-            if wrote == 0 { break; }
+            if wrote == 0 {
+                break;
+            }
             i += 1;
         }
         Ok(())
@@ -626,7 +684,11 @@ pub struct FetchStats {
 }
 impl FetchStats {
     fn new() -> Self {
-        Self { success_count: 0, error_count: 0, total_items: 0 }
+        Self {
+            success_count: 0,
+            error_count: 0,
+            total_items: 0,
+        }
     }
     fn add_page(&mut self, _page: u64, items: usize) {
         self.success_count += 1;
@@ -673,7 +735,9 @@ impl PageWriter for DataFusionPageWriter {
             .await?;
         Ok(())
     }
-    async fn commit(&self) -> Result<()> { self.final_writer.commit().await }
+    async fn commit(&self) -> Result<()> {
+        self.final_writer.commit().await
+    }
 }
 
 pub struct BatchedPageWriter {
@@ -701,7 +765,9 @@ impl BatchedPageWriter {
     async fn flush(&self) -> Result<()> {
         use crate::utils::datafusion_ext::JsonValueExt;
         let mut buf = self.buffer.write().await;
-        if buf.is_empty() { return Ok(()); }
+        if buf.is_empty() {
+            return Ok(());
+        }
         let json_array = Value::Array(buf.drain(..).collect());
         let sdf = json_array.to_sql(&self.table_name, &self.sql).await?;
         let result_json = sdf.inner().to_json().await?;
@@ -738,9 +804,17 @@ pub struct MemoryPageWriter {
     data: tokio::sync::RwLock<Vec<Value>>,
 }
 impl MemoryPageWriter {
-    pub fn new() -> Self { Self { data: tokio::sync::RwLock::new(Vec::new()) } }
-    pub async fn into_data(self) -> Vec<Value> { self.data.into_inner() }
-    pub async fn get_data(&self) -> Vec<Value> { self.data.read().await.clone() }
+    pub fn new() -> Self {
+        Self {
+            data: tokio::sync::RwLock::new(Vec::new()),
+        }
+    }
+    pub async fn into_data(self) -> Vec<Value> {
+        self.data.into_inner()
+    }
+    pub async fn get_data(&self) -> Vec<Value> {
+        self.data.read().await.clone()
+    }
 }
 #[async_trait]
 impl PageWriter for MemoryPageWriter {
