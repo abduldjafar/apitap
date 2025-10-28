@@ -5,8 +5,9 @@ use crate::utils::datafusion_ext::{DataWriter, QueryResult, QueryResultStream};
 use async_trait::async_trait;
 use serde_json::Value;
 use sqlx::{PgPool, types::Json};
-use tokio_stream::StreamExt;
+use std::borrow::Cow;
 use std::collections::BTreeMap;
+use tokio_stream::StreamExt;
 
 //=============== Type Definitions ============================================//
 
@@ -67,7 +68,7 @@ pub struct PostgresAutoColumnsWriter {
     batch_size: usize,
     sample_size: usize,
     auto_create: bool,
-    pub auto_truncate:bool,
+    pub auto_truncate: bool,
     table_created: tokio::sync::RwLock<bool>,
     columns_cache: tokio::sync::RwLock<Option<BTreeMap<String, PgType>>>,
 }
@@ -80,7 +81,7 @@ impl PostgresAutoColumnsWriter {
             batch_size: 100,
             sample_size: 10,
             auto_create: true,
-            auto_truncate:false,
+            auto_truncate: false,
             table_created: tokio::sync::RwLock::new(false),
             columns_cache: tokio::sync::RwLock::new(None),
         }
@@ -150,45 +151,60 @@ impl PostgresAutoColumnsWriter {
         Ok(final_types)
     }
 
-    async fn create_table_from_schema(&self, schema: &BTreeMap<String, PgType>) -> Result<()> {
-        if schema.is_empty() {
-            return Err(Error::Datafusion("No columns detected".to_string()));
-        }
+fn quote_ident(ident: &str) -> String {
+    // "foo"  -> "\"foo\""
+    // handle embedded quotes: foo"bar -> "foo""bar"
+    format!(r#""{}""#, ident.replace('"', r#"""""#))
+}
 
-        let column_defs: Vec<String> = schema
-            .iter()
-            .map(|(name, pg_type)| format!("{} {}", name, pg_type.as_sql()))
-            .collect();
+fn quote_ident_path(path: &str) -> String {
+    // public.unplash -> "public"."unplash"
+    path.split('.').map(Self::quote_ident).collect::<Vec<_>>().join(".")
+}
 
-        let query = format!(
-            "CREATE TABLE IF NOT EXISTS {} (
-                {}
-            )",
-            self.table_name,
-            column_defs.join(",\n                ")
-        );
-
-        sqlx::query(&query)
-            .execute(&self.pool)
-            .await
-            .map_err(|e| Error::Datafusion(format!("Create table: {}", e)))?;
-
-        let column_names: Vec<String> = schema.keys().cloned().collect();
-
-        println!(
-            "✅ Created table: {} with {} columns: {}",
-            self.table_name,
-            column_names.len(),
-            column_names.join(", ")
-        );
-
-        println!("   📋 Column types:");
-        for (name, pg_type) in schema {
-            println!("      - {}: {}", name, pg_type.as_sql());
-        }
-
-        Ok(())
+pub async fn create_table_from_schema(&self, schema: &BTreeMap<String, PgType>) -> Result<()> {
+    if schema.is_empty() {
+        return Err(Error::Datafusion("No columns detected".to_string()));
     }
+
+    // Quote every column name to avoid reserved-keyword collisions (e.g., "user")
+    let column_defs: Vec<String> = schema
+        .iter()
+        .map(|(name, pg_type)| format!("{} {}", Self::quote_ident(name), pg_type.as_sql()))
+        .collect();
+
+    // Quote table (and schema if present)
+    let table_sql = Self::quote_ident_path(&self.table_name);
+
+    let query = format!(
+        "CREATE TABLE IF NOT EXISTS {} (\n                {}\n            )",
+        table_sql,
+        column_defs.join(",\n                ")
+    );
+
+    println!("{}", query);
+
+    sqlx::query(&query)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| Error::Datafusion(format!("Create table: {}", e)))?;
+
+    let column_names: Vec<String> = schema.keys().cloned().collect();
+
+    println!(
+        "✅ Created table: {} with {} columns: {}",
+        self.table_name,
+        column_names.len(),
+        column_names.join(", ")
+    );
+
+    println!("   📋 Column types:");
+    for (name, pg_type) in schema {
+        println!("      - {}: {}", name, pg_type.as_sql());
+    }
+
+    Ok(())
+}
 
     async fn ensure_table(&self, sample_rows: &[Value]) -> Result<BTreeMap<String, PgType>> {
         if let Some(schema) = self.columns_cache.read().await.as_ref() {
@@ -223,72 +239,85 @@ impl PostgresAutoColumnsWriter {
         Ok(schema)
     }
 
-    pub async fn truncate(&self) -> Result<()>{
-        println!("Truncating {}...",self.table_name);
-         let query = format!(
-            "TRUNCATE {}",
-            self.table_name
-        );
-         sqlx::query(&query)
-            .execute(&self.pool)
-            .await
-            .map_err(|e| Error::Sqlx(format!("TRUNCATE: {}", e)))?;
-        Ok(())
-    }
-    async fn insert_batch(&self, rows: &[Value], schema: &BTreeMap<String, PgType>) -> Result<()> {
-        if rows.is_empty() {
-            return Ok(());
-        }
+    pub async fn truncate(&self) -> Result<()> {
+        let table_sql = Self::quote_ident(&self.table_name);
+        let sql = format!("TRUNCATE TABLE {}", table_sql);
 
-        let columns: Vec<&String> = schema.keys().collect();
-        let columns_str = columns
-            .iter()
-            .map(|s| s.as_str())
-            .collect::<Vec<_>>()
-            .join(", ");
-        let values_per_row = columns.len();
+        println!("Truncating {}...", self.table_name);
+        println!("{}", sql);
 
-        let mut placeholders = Vec::new();
-        for row_idx in 0..rows.len() {
-            let row_placeholders: Vec<String> = (1..=values_per_row)
-                .map(|col_idx| format!("${}", row_idx * values_per_row + col_idx))
-                .collect();
-            placeholders.push(format!("({})", row_placeholders.join(", ")));
-        }
-
-        let query = format!(
-            "INSERT INTO {} ({}) VALUES {}",
-            self.table_name,
-            columns_str,
-            placeholders.join(", ")
-        );
-
-        // ✅ COLLECT ALL VALUES FIRST
-        let mut all_values = Vec::new();
-        for row in rows {
-            for col_name in columns.iter() {
-                let value = row.get(*col_name).cloned().unwrap_or(Value::Null);
-                all_values.push(value);
+        match sqlx::query(&sql).execute(&self.pool).await {
+            Ok(_) => Ok(()),
+            Err(e) => {
+                // emulate IF EXISTS: swallow "undefined_table" (42P01)
+                if let Some(db_err) = e.as_database_error() {
+                    if db_err.code() == Some(Cow::Borrowed("42P01")) {
+                        eprintln!("Table {} does not exist, skipping TRUNCATE.", self.table_name);
+                        return Ok(());
+                    }
+                }
+                Err(Error::Sqlx(format!("TRUNCATE: {}", e)))
             }
         }
-
-        // ✅ NOW BIND THEM
-        let mut query_builder = sqlx::query(&query);
-        for (idx, value) in all_values.iter().enumerate() {
-            let col_idx = idx % values_per_row;
-            let col_name = columns[col_idx];
-            let expected_type = schema.get(col_name).unwrap();
-
-            query_builder = self.bind_value(query_builder, value, expected_type)?;
-        }
-
-        query_builder
-            .execute(&self.pool)
-            .await
-            .map_err(|e| Error::Datafusion(format!("PostgreSQL insert: {}", e)))?;
-
-        Ok(())
     }
+
+    pub async fn insert_batch(&self, rows: &[Value], schema: &BTreeMap<String, PgType>) -> Result<()> {
+    if rows.is_empty() {
+        return Ok(());
+    }
+
+    // Raw column names (as present in JSON & schema)
+    let col_names_raw: Vec<&str> = schema.keys().map(|s| s.as_str()).collect();
+    // SQL-safe (quoted) column names for the statement
+    let col_names_sql: Vec<String> = col_names_raw.iter().map(|n| Self::quote_ident(n)).collect();
+
+    let columns_str = col_names_sql.join(", ");
+    let values_per_row = col_names_raw.len();
+
+    // Build placeholders: ($1, $2, ...), ($n+1, ...)
+    let mut placeholders = Vec::with_capacity(rows.len());
+    for row_idx in 0..rows.len() {
+        let row_placeholders: Vec<String> = (1..=values_per_row)
+            .map(|col_idx| format!("${}", row_idx * values_per_row + col_idx))
+            .collect();
+        placeholders.push(format!("({})", row_placeholders.join(", ")));
+    }
+
+    // Quote table name too
+    let table_sql = Self::quote_ident_path(&self.table_name);
+
+    let query = format!(
+        "INSERT INTO {} ({}) VALUES {}",
+        table_sql,
+        columns_str,
+        placeholders.join(", ")
+    );
+
+    // Collect values in column order for each row
+    let mut all_values = Vec::with_capacity(rows.len() * values_per_row);
+    for row in rows {
+        for col_name in &col_names_raw {
+            let value = row.get(*col_name).cloned().unwrap_or(Value::Null);
+            all_values.push(value);
+        }
+    }
+
+    // Bind in the same order as placeholders
+    let mut q = sqlx::query(&query);
+    for (idx, value) in all_values.iter().enumerate() {
+        let col_idx = idx % values_per_row;
+        let col_name = col_names_raw[col_idx];
+        let expected_type = schema.get(col_name).expect("schema must contain column");
+
+        q = self.bind_value(q, value, expected_type)?;
+    }
+
+    q.execute(&self.pool)
+        .await
+        .map_err(|e| Error::Datafusion(format!("PostgreSQL insert: {}", e)))?;
+
+    Ok(())
+}
 
     /// Bind value with proper type conversion
     fn bind_value<'q>(
@@ -373,10 +402,8 @@ impl PostgresAutoColumnsWriter {
 #[async_trait]
 impl DataWriter for PostgresAutoColumnsWriter {
     async fn write_stream(&self, mut result: QueryResultStream) -> Result<()> {
-
         let mut buf: Vec<serde_json::Value> = Vec::with_capacity(self.batch_size);
         let mut schema: Option<BTreeMap<String, PgType>> = None; // whatever type your ensure_table returns
-
 
         while let Some(item) = result.data.next().await {
             let v = item?; // serde_json::Value

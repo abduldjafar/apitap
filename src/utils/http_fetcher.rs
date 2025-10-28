@@ -3,77 +3,105 @@ use crate::errors::{Error, Result};
 use crate::utils::datafusion_ext::{
     DataFrameExt, DataWriter, JsonValueExt, QueryResult, QueryResultStream,
 };
+use reqwest::header::CONTENT_TYPE;
 use async_trait::async_trait;
-use futures::{Stream, TryStreamExt};
-use futures::stream::{self, BoxStream, StreamExt};
+use futures::stream::{self, BoxStream, StreamExt, TryStreamExt};
+use futures::Stream;
 use reqwest::Client;
 use serde_json::Value;
-use std::io;
 use std::pin::Pin;
 use std::sync::Arc;
-use tokio_util::{io::StreamReader, codec::{FramedRead, LinesCodec}};
+use tokio_util::{
+    codec::{FramedRead, LinesCodec},
+    io::StreamReader,
+};
 
+// =========================== NDJSON helper ===================================
 
-pub async fn ndjson_stream_page(
+/// Stream an HTTP response as NDJSON and flatten an optional JSON pointer (`/data`, etc.).
+/// If `data_path` is None, it will try to flatten the top-level array; otherwise it yields the object.
+pub async fn ndjson_stream_qs(
     client: &reqwest::Client,
     url: &str,
-    page_param: &str,
-    page: u64,
+    query: &[(String, String)],
+    data_path: Option<&str>,
 ) -> Result<BoxStream<'static, Result<Value>>> {
     let resp = client
         .get(url)
-        .query(&[(page_param, &page.to_string())])
+        .query(query)
         .send()
         .await
         .map_err(|e| Error::Reqwest(e.to_string()))?
         .error_for_status()
         .map_err(|e| Error::Reqwest(e.to_string()))?;
 
-    // reqwest stream -> AsyncRead -> lines
+    // Heuristic: treat as NDJSON only if content-type says so
+    let is_ndjson = resp
+        .headers()
+        .get(CONTENT_TYPE)
+        .and_then(|h| h.to_str().ok())
+        .map(|ct| ct.contains("ndjson") || ct.contains("x-ndjson"))
+        .unwrap_or(false);
+
+    if !is_ndjson {
+        // -------- Regular JSON (object or array) path --------
+        let bytes = resp.bytes().await.map_err(|e| Error::Reqwest(e.to_string()))?;
+        let v: Value = serde_json::from_slice(&bytes)
+            .map_err(|e| Error::SerdeJson(e.to_string()))?;
+
+        // If data_path is provided, drill into it; else use the whole value.
+        let target = if let Some(p) = data_path {
+            v.pointer(p).cloned().unwrap_or(Value::Null)
+        } else {
+            v
+        };
+
+        let items: Vec<Value> = if let Some(arr) = target.as_array() {
+            arr.clone()
+        } else if target.is_null() {
+            Vec::new()
+        } else {
+            vec![target]
+        };
+
+        // Emit as a stream of Values
+        let st = stream::iter(items.into_iter().map(Ok)).boxed();
+        return Ok(st);
+    }
+
+    // -------- NDJSON path (one JSON per line) --------
     let byte_stream = resp
         .bytes_stream()
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, e));
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e));
     let reader = StreamReader::new(byte_stream);
+    let lines = FramedRead::new(reader, LinesCodec::new());
+    let data_path_owned = data_path.map(|s| s.to_owned());
 
-    // If you want to cap max line length:
-    // let lines = FramedRead::new(reader, LinesCodec::new_with_max_length(1_000_000));
-    let mut lines = FramedRead::new(reader, LinesCodec::new());
-
-    // Build a streaming adapter that can yield multiple items per line.
     let s = async_stream::try_stream! {
+        let mut lines = lines;
         while let Some(line_res) = lines.next().await {
             let line = line_res.map_err(|e| Error::Io(e.to_string()))?;
             let trimmed = line.trim();
-            if trimmed.is_empty() {
-                continue;
-            }
+            if trimmed.is_empty() { continue; }
 
             let v: Value = serde_json::from_str(trimmed)
                 .map_err(|e| Error::SerdeJson(e.to_string()))?;
 
-            // Prefer /data if present
-            if let Some(inner) = v.pointer("/data") {
-                if let Some(arr) = inner.as_array() {
-                    for item in arr {
-                        // clone since serde_json::Value is owned
-                        yield item.clone();
+            if let Some(ref p) = data_path_owned {
+                if let Some(inner) = v.pointer(p) {
+                    if let Some(arr) = inner.as_array() {
+                        for item in arr { yield item.clone(); }
+                    } else if !inner.is_null() {
+                        yield inner.clone();
                     }
-                } else if !inner.is_null() {
-                    yield inner.clone();
+                    continue;
                 }
-                // if /data is null or missing, fall through to handle v itself
-                else {
-                    // nothing to yield from /data
-                }
+            }
+
+            if let Some(arr) = v.as_array() {
+                for item in arr { yield item.clone(); }
             } else {
-                // No /data wrapper; if the whole line is an array, flatten it
-                if let Some(arr) = v.as_array() {
-                    for item in arr {
-                        yield item.clone();
-                    }
-                } else {
-                    yield v;
-                }
+                yield v;
             }
         }
     };
@@ -81,12 +109,10 @@ pub async fn ndjson_stream_page(
     Ok(s.boxed())
 }
 
-//============================== Page Writer Trait ============================//
+// =============================== Page Writer =================================
 
-/// Writer for streaming API pages (similar to DataWriter but for HTTP)
 #[async_trait]
 pub trait PageWriter: Send + Sync {
-    /// Write a page of data
     async fn write_page(&self, page_number: u64, data: Vec<Value>) -> Result<()>;
 
     async fn write_page_stream(
@@ -97,30 +123,44 @@ pub trait PageWriter: Send + Sync {
         Ok(())
     }
 
-    /// Handle page fetch errors
     async fn on_page_error(&self, page_number: u64, error: String) -> Result<()> {
         eprintln!("❌ Error fetching page {}: {}", page_number, error);
         Ok(())
     }
 
-    /// Called before fetching starts
-    async fn begin(&self) -> Result<()> {
-        Ok(())
-    }
-
-    /// Called after all pages complete
-    async fn commit(&self) -> Result<()> {
-        Ok(())
-    }
+    async fn begin(&self) -> Result<()> { Ok(()) }
+    async fn commit(&self) -> Result<()> { Ok(()) }
 }
 
-//======================== Streaming Paginated Fetcher ========================//
+// =========================== Pagination types ================================
+
+#[derive(Debug, Clone)]
+pub enum Pagination {
+    LimitOffset { limit_param: String, offset_param: String },
+    PageNumber  { page_param: String,  per_page_param: String },
+    PageOnly    { page_param: String },
+    Cursor      { cursor_param: String, page_size_param: Option<String> },
+    Default,
+}
+
+/// Hint to compute total pages.
+/// - Items: pointer points to total items; pages = ceil(items/limit)
+/// - Pages:  pointer points directly to total pages
+#[derive(Debug, Clone)]
+pub enum TotalHint {
+    Items { pointer: String },
+    Pages { pointer: String },
+}
+
+// =========================== Fetcher =========================================
 
 pub struct PaginatedFetcher {
     client: Client,
     base_url: String,
     page_param_name: String,
     concurrency: usize,
+    pagination_config: Pagination,
+    batch_size: usize,
 }
 
 impl PaginatedFetcher {
@@ -135,155 +175,448 @@ impl PaginatedFetcher {
             base_url: base_url.into(),
             page_param_name: page_param_name.into(),
             concurrency,
+            pagination_config: Pagination::Default,
+            batch_size: 256,
         }
     }
 
-    /// Fetch all pages and stream to writer (NO memory accumulation!)
-   pub async fn fetch_to_writer(&self, writer: Arc<dyn PageWriter + Send + Sync>) -> Result<FetchStats> {
-        
-        const BATCH_SIZE: usize = 256; // tune for your sink throughput
+    pub fn with_limit_offset(
+        mut self,
+        limit_param: impl Into<String>,
+        offset_param: impl Into<String>,
+    ) -> Self {
+        self.pagination_config = Pagination::LimitOffset {
+            limit_param: limit_param.into(),
+            offset_param: offset_param.into(),
+        };
+        self
+    }
+
+    pub fn with_page_number(
+        mut self,
+        page_param: impl Into<String>,
+        per_page_param: impl Into<String>,
+    ) -> Self {
+        self.pagination_config = Pagination::PageNumber {
+            page_param: page_param.into(),
+            per_page_param: per_page_param.into(),
+        };
+        self
+    }
+
+    pub fn with_batch_size(mut self, n: usize) -> Self {
+        self.batch_size = n.max(1);
+        self
+    }
+
+    // -------------------- Public entry points --------------------------------
+
+    /// LIMIT/OFFSET mode. If `total_hint` is None, it fetches until a page yields 0 rows.
+    pub async fn fetch_limit_offset(
+        &self,
+        limit: u64,
+        data_path: Option<&str>,
+        total_hint: Option<TotalHint>,
+        writer: Arc<dyn PageWriter>,
+    ) -> Result<FetchStats> {
+        let (limit_param, offset_param) = match &self.pagination_config {
+            Pagination::LimitOffset { limit_param, offset_param } =>
+                (limit_param.clone(), offset_param.clone()),
+            _ => return Err(Error::Reqwest("Pagination::LimitOffset not configured".into())),
+        };
 
         writer.begin().await?;
 
-        // 1) Discover total_pages from page 1 (JSON-with-metadata)
-        let first: Value = self.client
+        // ---- First request (offset=0) as JSON to read totals; also process it ----
+        let first_json: Value = self.client
             .get(&self.base_url)
-            .query(&[(&self.page_param_name, "1")])
-            .send().await
-            .map_err(|e| Error::Reqwest(e.to_string()))?
-            .error_for_status()
-            .map_err(|e| Error::Reqwest(e.to_string()))?
-            .json().await
-            .map_err(|e| Error::Reqwest(e.to_string()))?;
+            .query(&[(limit_param.as_str(), limit.to_string())])
+            .query(&[(offset_param.as_str(), "0")])
+            .send().await.map_err(|e| Error::Reqwest(e.to_string()))?
+            .error_for_status().map_err(|e| Error::Reqwest(e.to_string()))?
+            .json().await.map_err(|e| Error::Reqwest(e.to_string()))?;
 
-        let total_pages = first
-            .pointer("/metadata/pagination/pages")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(1);
+        let mut stats = FetchStats::new();
 
-        println!("📄 Total pages: {total_pages}");
+        // Write first page immediately (array path or stream fallback)
+        let mut wrote_first = false;
+        if let Some(p) = data_path {
+            if let Some(arr) = first_json.pointer(p).and_then(|v| v.as_array()).cloned() {
+                let n = arr.len();
+                writer.write_page(0, arr).await?;
+                stats.add_page(0, n);
+                wrote_first = true;
+            }
+        }
+        if !wrote_first {
+            // Fallback: NDJSON stream with limit/offset=0
+            let mut s = ndjson_stream_qs(
+                &self.client,
+                &self.base_url,
+                &[
+                    (limit_param.clone(), limit.to_string()),
+                    (offset_param.clone(), "0".into()),
+                ],
+                data_path,
+            ).await?;
+            self.write_streamed_page(0, &mut s, &*writer, &mut stats).await?;
+        }
 
-        let stats = Arc::new(tokio::sync::RwLock::new(FetchStats::new()));
+        // Determine total pages if possible
+        let pages_opt = match total_hint {
+            Some(TotalHint::Items { ref pointer }) => {
+                first_json.pointer(pointer).and_then(|v| v.as_u64()).map(|total_items| {
+                    (total_items + limit - 1) / limit
+                })
+            }
+            Some(TotalHint::Pages { ref pointer }) => {
+                first_json.pointer(pointer).and_then(|v| v.as_u64())
+            }
+            None => None,
+        };
 
-        // If first page also exposes a data array (non-NDJSON), write it now (optional)
-        if let Some(arr) = first.pointer("/data").and_then(|v| v.as_array()).cloned() {
-            let n = arr.len();
-            writer.write_page(1, arr).await?;
-            stats.write().await.add_page(1, n);
+        // If we know pages, parallel fetch the rest; else loop until empty page.
+        let result = if let Some(pages) = pages_opt {
+            // already did offset=0; iterate i=1..pages (offset = i*limit)
+            self.fetch_remaining_known_pages_limit_offset(
+                pages,
+                limit,
+                data_path,
+                &limit_param,
+                &offset_param,
+                writer.clone(),
+                &mut stats,
+            )
+            .await
         } else {
-            // Or stream page 1 as NDJSON if the endpoint supports it:
-            let mut s = ndjson_stream_page(&self.client, &self.base_url, &self.page_param_name, 1)
-                .await
-                .map_err(|e| Error::Reqwest(e.to_string()))?;
-            let mut buf = Vec::with_capacity(BATCH_SIZE);
-            while let Some(item) = s.next().await {
-                match item {
-                    Ok(v) => {
-                        buf.push(v);
-                        if buf.len() == BATCH_SIZE {
-                            let count = buf.len();
-                            let out = std::mem::take(&mut buf);
-                            writer.write_page(1, out).await?;
-                            stats.write().await.add_page(1, count);
-                        }
-                    }
-                    Err(e) => {
-                        stats.write().await.add_error(1);
-                        let _ = writer.on_page_error(1, e.to_string()).await;
-                    }
-                }
-            }
-            if !buf.is_empty() {
-                let count = buf.len();
-                let out = std::mem::take(&mut buf);
-                writer.write_page(1, out).await?;
-                stats.write().await.add_page(1, count);
+            // Unknown total: keep stepping offsets until a page yields 0 items
+            self.fetch_until_empty_limit_offset(
+                limit,
+                data_path,
+                &limit_param,
+                &offset_param,
+                writer.clone(),
+                &mut stats,
+            )
+            .await
+        };
+
+        let _ = result; // propagate errors if any
+        writer.commit().await?;
+        Ok(stats)
+    }
+
+    /// PAGE/PER_PAGE mode.
+    pub async fn fetch_page_number(
+        &self,
+        per_page: u64,
+        data_path: Option<&str>,
+        total_hint: Option<TotalHint>,
+        writer: Arc<dyn PageWriter>,
+    ) -> Result<FetchStats> {
+        let (page_param, per_page_param) = match &self.pagination_config {
+            Pagination::PageNumber { page_param, per_page_param } =>
+                (page_param.clone(), per_page_param.clone()),
+            _ => return Err(Error::Reqwest("Pagination::PageNumber not configured".into())),
+        };
+
+        writer.begin().await?;
+
+        // First request as JSON (page=1)
+        let first_json: Value = self.client
+            .get(&self.base_url)
+            .query(&[(page_param.as_str(), "1".to_string())])
+            .query(&[(per_page_param.as_str(), per_page.to_string())])
+            .send().await.map_err(|e| Error::Reqwest(e.to_string()))?
+            .error_for_status().map_err(|e| Error::Reqwest(e.to_string()))?
+            .json().await.map_err(|e| Error::Reqwest(e.to_string()))?;
+
+        let mut stats = FetchStats::new();
+
+        // Write page 1
+        let mut wrote_first = false;
+        if let Some(p) = data_path {
+            if let Some(arr) = first_json.pointer(p).and_then(|v| v.as_array()).cloned() {
+                let n = arr.len();
+                writer.write_page(1, arr).await?;
+                stats.add_page(1, n);
+                wrote_first = true;
             }
         }
-
-        if total_pages <= 1 {
-            writer.commit().await?;
-            return Ok(stats.read().await.clone());
+        if !wrote_first {
+            let mut s = ndjson_stream_qs(
+                &self.client,
+                &self.base_url,
+                &[
+                    (page_param.clone(), "1".into()),
+                    (per_page_param.clone(), per_page.to_string()),
+                ],
+                data_path,
+            ).await?;
+            self.write_streamed_page(1, &mut s, &*writer, &mut stats).await?;
         }
 
-        // 2) Stream remaining pages concurrently (true pagination: 2..=total_pages)
-        let client = self.client.clone();
-        let url = self.base_url.clone();
-        let page_param = self.page_param_name.clone();
-        let stats_ref = Arc::clone(&stats);
-        let writer_tasks = Arc::clone(&writer);
+        // Determine total pages
+        let pages_opt = match total_hint {
+            Some(TotalHint::Items { ref pointer }) => {
+                first_json.pointer(pointer).and_then(|v| v.as_u64()).map(|total_items| {
+                    (total_items + per_page - 1) / per_page
+                })
+            }
+            Some(TotalHint::Pages { ref pointer }) => {
+                first_json.pointer(pointer).and_then(|v| v.as_u64())
+            }
+            None => None,
+        };
 
-        stream::iter(2..=total_pages)
-            .map(move |page| {
-                let client = client.clone();
-                let url = url.clone();
-                let page_param = page_param.clone();
-                let writer = Arc::clone(&writer_tasks);
-                let stats = Arc::clone(&stats_ref);
+        if let Some(total_pages) = pages_opt {
+            // pages 2..=total_pages
+            let client = self.client.clone();
+            let url = self.base_url.clone();
+            let page_param_c = page_param.clone();
+            let per_page_param_c = per_page_param.clone();
+            let data_path_c = data_path.map(|s| s.to_string());
+            let writer_ref = Arc::clone(&writer);
+            let batch_size = self.batch_size;
 
-                async move {
-                    let stream_res = ndjson_stream_page(&client, &url, &page_param, page).await;
-                    let mut s = match stream_res {
-                        Ok(s) => s,
-                        Err(e) => {
-                            stats.write().await.add_error(page);
-                            let _ = writer.on_page_error(page, e.to_string()).await;
-                            return;
-                        }
-                    };
+            stream::iter(2..=total_pages)
+                .map(move |page| {
+                    let client = client.clone();
+                    let url = url.clone();
+                    let page_param = page_param_c.clone();
+                    let per_page_param = per_page_param_c.clone();
+                    let data_path = data_path_c.clone();
+                    let writer = Arc::clone(&writer_ref);
 
-                    let mut buf = Vec::with_capacity(BATCH_SIZE);
-                    while let Some(item) = s.next().await {
-                        match item {
-                            Ok(v) => {
-                                buf.push(v);
-                                if buf.len() == 50 {
-                                    let count = buf.len();
-                                    let out = std::mem::take(&mut buf);
-                                    
-                                    match writer.write_page(page, out).await {
-                                        Ok(_) => stats.write().await.add_page(page, count),
-                                        Err(e) => {
-                                            stats.write().await.add_error(page);
+                    async move {
+                        let mut s = match ndjson_stream_qs(
+                            &client,
+                            &url,
+                            &[
+                                (page_param, page.to_string()),
+                                (per_page_param, per_page.to_string()),
+                            ],
+                            data_path.as_deref(),
+                        ).await {
+                            Ok(s) => s,
+                            Err(e) => {
+                                let _ = writer.on_page_error(page, e.to_string()).await;
+                                return;
+                            }
+                        };
+
+                        let mut buf = Vec::with_capacity(batch_size);
+                        while let Some(item) = s.next().await {
+                            match item {
+                                Ok(v) => {
+                                    buf.push(v);
+                                    if buf.len() == batch_size {
+                                        let out = std::mem::take(&mut buf);
+                                        if let Err(e) = writer.write_page(page, out).await {
                                             let _ = writer.on_page_error(page, e.to_string()).await;
                                         }
                                     }
                                 }
+                                Err(e) => {
+                                    let _ = writer.on_page_error(page, e.to_string()).await;
+                                }
                             }
-                            Err(e) => {
-                                stats.write().await.add_error(page);
+                        }
+                        if !buf.is_empty() {
+                            let out = std::mem::take(&mut buf);
+                            if let Err(e) = writer.write_page(page, out).await {
                                 let _ = writer.on_page_error(page, e.to_string()).await;
                             }
                         }
                     }
+                })
+                .buffer_unordered(self.concurrency)
+                .collect::<Vec<_>>()
+                .await;
+        } else {
+            // Unknown total pages: fetch page=2,3,... until empty
+            let mut page = 2u64;
+            loop {
+                let mut s = match ndjson_stream_qs(
+                    &self.client,
+                    &self.base_url,
+                    &[
+                        (page_param.clone(), page.to_string()),
+                        (per_page_param.clone(), per_page.to_string()),
+                    ],
+                    data_path,
+                ).await {
+                    Ok(s) => s,
+                    Err(e) => {
+                        let _ = writer.on_page_error(page, e.to_string()).await;
+                        break;
+                    }
+                };
 
-                    if !buf.is_empty() {
+                let wrote = self.write_streamed_page(page, &mut s, &*writer, &mut stats).await?;
+                if wrote == 0 { break; } // stop on empty page
+                page += 1;
+            }
+        }
+
+        writer.commit().await?;
+        Ok(stats)
+    }
+
+    // -------------------- Private helpers ------------------------------------
+
+    async fn write_streamed_page(
+        &self,
+        page: u64,
+        s: &mut BoxStream<'static, Result<Value>>,
+        writer: &dyn PageWriter,
+        stats: &mut FetchStats,
+    ) -> Result<usize> {
+        let mut buf = Vec::with_capacity(self.batch_size);
+        let mut written = 0usize;
+
+        while let Some(item) = s.next().await {
+            match item {
+                Ok(v) => {
+                    buf.push(v);
+                    if buf.len() == self.batch_size {
                         let count = buf.len();
                         let out = std::mem::take(&mut buf);
-                        match writer.write_page(page, out).await {
-                            Ok(_) => stats.write().await.add_page(page, count),
+                        writer.write_page(page, out).await?;
+                        stats.add_page(page, count);
+                        written += count;
+                    }
+                }
+                Err(e) => {
+                    writer.on_page_error(page, e.to_string()).await?;
+                }
+            }
+        }
+        if !buf.is_empty() {
+            let count = buf.len();
+            let out = std::mem::take(&mut buf);
+            writer.write_page(page, out).await?;
+            stats.add_page(page, count);
+            written += count;
+        }
+        Ok(written)
+    }
+
+    async fn fetch_remaining_known_pages_limit_offset(
+        &self,
+        pages: u64, // total pages
+        limit: u64,
+        data_path: Option<&str>,
+        limit_param: &str,
+        offset_param: &str,
+        writer: Arc<dyn PageWriter>,
+        stats: &mut FetchStats,
+    ) -> Result<()> {
+        // We already wrote offset=0 ⇒ remaining i=1..pages-1 (offset = i*limit)
+        let client = self.client.clone();
+        let url = self.base_url.clone();
+        let limit_param = limit_param.to_string();
+        let offset_param = offset_param.to_string();
+        let data_path_c = data_path.map(|s| s.to_string());
+        let writer_ref = Arc::clone(&writer);
+        let batch_size = self.batch_size;
+
+        stream::iter(1..pages)
+            .map(move |i| {
+                let client = client.clone();
+                let url = url.clone();
+                let limit_param = limit_param.clone();
+                let offset_param = offset_param.clone();
+                let data_path = data_path_c.clone();
+                let writer = Arc::clone(&writer_ref);
+                let offset = i * limit;
+
+                async move {
+                    let mut s = match ndjson_stream_qs(
+                        &client,
+                        &url,
+                        &[
+                            (limit_param, limit.to_string()),
+                            (offset_param, offset.to_string()),
+                        ],
+                        data_path.as_deref(),
+                    ).await {
+                        Ok(s) => s,
+                        Err(e) => {
+                            let _ = writer.on_page_error(i, e.to_string()).await;
+                            return;
+                        }
+                    };
+
+                    let mut buf = Vec::with_capacity(batch_size);
+                    while let Some(item) = s.next().await {
+                        match item {
+                            Ok(v) => {
+                                buf.push(v);
+                                if buf.len() == batch_size {
+                                    let out = std::mem::take(&mut buf);
+                                    if let Err(e) = writer.write_page(i, out).await {
+                                        let _ = writer.on_page_error(i, e.to_string()).await;
+                                    }
+                                }
+                            }
                             Err(e) => {
-                                stats.write().await.add_error(page);
-                                let _ = writer.on_page_error(page, e.to_string()).await;
+                                let _ = writer.on_page_error(i, e.to_string()).await;
                             }
                         }
                     }
-
-                    //println!("✅ Page {page}/{total_pages} streamed");
+                    if !buf.is_empty() {
+                        let out = std::mem::take(&mut buf);
+                        if let Err(e) = writer.write_page(i, out).await {
+                            let _ = writer.on_page_error(i, e.to_string()).await;
+                        }
+                    }
                 }
             })
             .buffer_unordered(self.concurrency)
             .collect::<Vec<_>>()
             .await;
 
-        // 3) Finish
-        writer.commit().await?;
+        Ok(())
+    }
 
-        Ok(stats.read().await.clone())
+    async fn fetch_until_empty_limit_offset(
+        &self,
+        limit: u64,
+        data_path: Option<&str>,
+        limit_param: &str,
+        offset_param: &str,
+        writer: Arc<dyn PageWriter>,
+        stats: &mut FetchStats,
+    ) -> Result<()> {
+        let mut i = 1u64; // we already handled offset=0
+        loop {
+            let offset = i * limit;
+            let mut s = match ndjson_stream_qs(
+                &self.client,
+                &self.base_url,
+                &[
+                    (limit_param.to_string(), limit.to_string()),
+                    (offset_param.to_string(), offset.to_string()),
+                ],
+                data_path,
+            ).await {
+                Ok(s) => s,
+                Err(e) => {
+                    writer.on_page_error(i, e.to_string()).await?;
+                    break;
+                }
+            };
+
+            let wrote = self.write_streamed_page(i, &mut s, &*writer, stats).await?;
+            if wrote == 0 { break; }
+            i += 1;
+        }
+        Ok(())
     }
 }
 
-//=============================== Fetch Stats =================================//
+// ============================== Stats =======================================
 
 #[derive(Debug, Clone)]
 pub struct FetchStats {
@@ -291,36 +624,27 @@ pub struct FetchStats {
     pub error_count: usize,
     pub total_items: usize,
 }
-
 impl FetchStats {
     fn new() -> Self {
-        Self {
-            success_count: 0,
-            error_count: 0,
-            total_items: 0,
-        }
+        Self { success_count: 0, error_count: 0, total_items: 0 }
     }
-
     fn add_page(&mut self, _page: u64, items: usize) {
         self.success_count += 1;
         self.total_items += items;
     }
-
+    #[allow(dead_code)]
     fn add_error(&mut self, _page: u64) {
         self.error_count += 1;
     }
 }
 
-//========================== Example: DataFusion Writer =======================//
+// ===================== Example Writers (unchanged in spirit) =================
 
-/// Writer that takes API pages → DataFusion → Final destination
 pub struct DataFusionPageWriter {
     table_name: String,
     sql: String,
     final_writer: Arc<dyn DataWriter>,
-    accumulated: tokio::sync::RwLock<Vec<Value>>,
 }
-
 impl DataFusionPageWriter {
     pub fn new(
         table_name: impl Into<String>,
@@ -331,50 +655,27 @@ impl DataFusionPageWriter {
             table_name: table_name.into(),
             sql: sql.into(),
             final_writer,
-            accumulated: tokio::sync::RwLock::new(Vec::new()),
         }
     }
 }
 
 #[async_trait]
 impl PageWriter for DataFusionPageWriter {
-    async fn write_page_stream(
-        &self,
-        page_number: u64,
-        stream_data: Pin<Box<dyn Stream<Item = Result<Value>> + Send>>,
-    ) -> Result<()> {
-        Ok(())
-    }
-
     async fn write_page(&self, page_number: u64, data: Vec<Value>) -> Result<()> {
-        // Option 1: Process each page immediately
-        // (Use this if you want true streaming)
-        use crate::utils::datafusion_ext::JsonValueExt;
-
         let json_array = Value::Array(data);
         let sdf = json_array.to_sql(&self.table_name, &self.sql).await?;
-        let mut result_json = sdf.inner().to_stream().await?;
-
-
+        let result_stream = sdf.inner().to_stream().await?;
         self.final_writer
             .write_stream(QueryResultStream {
                 table_name: format!("{}_page_{}", self.table_name, page_number),
-                data: result_json,
+                data: result_stream,
             })
             .await?;
-
-
         Ok(())
     }
-
-    async fn commit(&self) -> Result<()> {
-        self.final_writer.commit().await
-    }
+    async fn commit(&self) -> Result<()> { self.final_writer.commit().await }
 }
 
-//======================= Example: Batched Writer =============================//
-
-/// Accumulate N pages, then process batch
 pub struct BatchedPageWriter {
     batch_size: usize,
     table_name: String,
@@ -382,7 +683,6 @@ pub struct BatchedPageWriter {
     final_writer: Arc<dyn DataWriter>,
     buffer: tokio::sync::RwLock<Vec<Value>>,
 }
-
 impl BatchedPageWriter {
     pub fn new(
         batch_size: usize,
@@ -391,28 +691,21 @@ impl BatchedPageWriter {
         final_writer: Arc<dyn DataWriter>,
     ) -> Self {
         Self {
-            batch_size,
+            batch_size: batch_size.max(1),
             table_name: table_name.into(),
             sql: sql.into(),
             final_writer,
             buffer: tokio::sync::RwLock::new(Vec::new()),
         }
     }
-
     async fn flush(&self) -> Result<()> {
         use crate::utils::datafusion_ext::JsonValueExt;
-
-        let mut buffer = self.buffer.write().await;
-        if buffer.is_empty() {
-            return Ok(());
-        }
-
-        let json_array = Value::Array(buffer.drain(..).collect());
+        let mut buf = self.buffer.write().await;
+        if buf.is_empty() { return Ok(()); }
+        let json_array = Value::Array(buf.drain(..).collect());
         let sdf = json_array.to_sql(&self.table_name, &self.sql).await?;
         let result_json = sdf.inner().to_json().await?;
-
         let row_count = result_json.as_array().map(|a| a.len()).unwrap_or(0);
-
         self.final_writer
             .write(QueryResult {
                 table_name: self.table_name.clone(),
@@ -420,7 +713,6 @@ impl BatchedPageWriter {
                 row_count,
             })
             .await?;
-
         Ok(())
     }
 }
@@ -428,48 +720,28 @@ impl BatchedPageWriter {
 #[async_trait]
 impl PageWriter for BatchedPageWriter {
     async fn write_page(&self, _page_number: u64, data: Vec<Value>) -> Result<()> {
-        let mut buffer = self.buffer.write().await;
-        buffer.extend(data);
-
-        // Flush if batch size reached
-        if buffer.len() >= self.batch_size {
-            drop(buffer); // Release lock before flush
+        let mut buf = self.buffer.write().await;
+        buf.extend(data);
+        if buf.len() >= self.batch_size {
+            drop(buf);
             self.flush().await?;
         }
-
         Ok(())
     }
-
     async fn commit(&self) -> Result<()> {
-        // Flush any remaining data
         self.flush().await?;
         self.final_writer.commit().await
     }
 }
 
-//======================== Example: Simple Memory Writer ======================//
-
-/// Collects all data in memory (for small datasets or testing)
 pub struct MemoryPageWriter {
     data: tokio::sync::RwLock<Vec<Value>>,
 }
-
 impl MemoryPageWriter {
-    pub fn new() -> Self {
-        Self {
-            data: tokio::sync::RwLock::new(Vec::new()),
-        }
-    }
-
-    pub async fn into_data(self) -> Vec<Value> {
-        self.data.into_inner()
-    }
-
-    pub async fn get_data(&self) -> Vec<Value> {
-        self.data.read().await.clone()
-    }
+    pub fn new() -> Self { Self { data: tokio::sync::RwLock::new(Vec::new()) } }
+    pub async fn into_data(self) -> Vec<Value> { self.data.into_inner() }
+    pub async fn get_data(&self) -> Vec<Value> { self.data.read().await.clone() }
 }
-
 #[async_trait]
 impl PageWriter for MemoryPageWriter {
     async fn write_page(&self, _page_number: u64, data: Vec<Value>) -> Result<()> {

@@ -1,7 +1,7 @@
 // src/utils/datafusion_ext.rs
 
 use async_trait::async_trait;
-use futures::{stream, Stream, StreamExt};
+use futures::{Stream, StreamExt, stream};
 use serde_arrow::schema::{SchemaLike, TracingOptions};
 use std::{pin::Pin, sync::Arc};
 use tokio::sync::{OnceCell, RwLock, Semaphore};
@@ -24,17 +24,15 @@ use crate::errors::{Error, Result};
 static SHARED_CTX: OnceCell<Arc<SessionContext>> = OnceCell::const_new();
 
 /// Stream of JSON rows (`Result<Value>`) boxed + pinned for dynamic dispatch.
-pub type JsonStreamType =
-    Pin<Box<dyn Stream<Item = Result<serde_json::Value>> + Send + 'static>>;
+pub type JsonStreamType = Pin<Box<dyn Stream<Item = Result<serde_json::Value>> + Send + 'static>>;
 
 async fn get_shared_context() -> Arc<SessionContext> {
     SHARED_CTX
         .get_or_init(|| async {
             let memory_pool = GreedyMemoryPool::new(256 * 1024 * 1024);
-            let runtime_env = RuntimeEnv::new(
-                RuntimeConfig::new().with_memory_pool(Arc::new(memory_pool)),
-            )
-            .expect("Failed to create runtime env");
+            let runtime_env =
+                RuntimeEnv::new(RuntimeConfig::new().with_memory_pool(Arc::new(memory_pool)))
+                    .expect("Failed to create runtime env");
 
             let session_config = SessionConfig::new()
                 .with_target_partitions(1)
@@ -98,9 +96,8 @@ impl JsonValueExt for serde_json::Value {
         )
         .map_err(|e| Error::Datafusion(format!("from_samples: {e}")))?;
 
-        let batch: RecordBatch =
-            serde_arrow::to_record_batch(&fields, json_array)
-                .map_err(|e| Error::Datafusion(format!("to_record_batch: {e}")))?;
+        let batch: RecordBatch = serde_arrow::to_record_batch(&fields, json_array)
+            .map_err(|e| Error::Datafusion(format!("to_record_batch: {e}")))?;
 
         ctx.read_batch(batch)
             .map_err(|e| Error::Datafusion(format!("read_batch: {e}")))
@@ -124,9 +121,8 @@ impl JsonValueExt for serde_json::Value {
         )
         .map_err(|e| Error::Datafusion(format!("from_samples: {e}")))?;
 
-        let batch: RecordBatch =
-            serde_arrow::to_record_batch(&fields, json_array)
-                .map_err(|e| Error::Datafusion(format!("to_record_batch: {e}")))?;
+        let batch: RecordBatch = serde_arrow::to_record_batch(&fields, json_array)
+            .map_err(|e| Error::Datafusion(format!("to_record_batch: {e}")))?;
 
         // Best-effort cleanup of any existing table with the same name.
         let _ = ctx.deregister_table(table_name);
@@ -139,7 +135,11 @@ impl JsonValueExt for serde_json::Value {
             .await
             .map_err(|e| Error::Datafusion(format!("sql planning: {e}")))?;
 
-        Ok(SqlDataFrame { df, ctx, table_name: table_name.to_string() })
+        Ok(SqlDataFrame {
+            df,
+            ctx,
+            table_name: table_name.to_string(),
+        })
     }
 }
 
@@ -274,9 +274,15 @@ pub trait DataWriter: Send + Sync {
     }
 
     /// Lifecycle hooks.
-    async fn begin(&self) -> Result<()> { Ok(()) }
-    async fn commit(&self) -> Result<()> { Ok(()) }
-    async fn rollback(&self) -> Result<()> { Ok(()) }
+    async fn begin(&self) -> Result<()> {
+        Ok(())
+    }
+    async fn commit(&self) -> Result<()> {
+        Ok(())
+    }
+    async fn rollback(&self) -> Result<()> {
+        Ok(())
+    }
 }
 
 // ====================== Query with Per-Table Writer ========================= //
@@ -296,7 +302,12 @@ impl TableQuery {
         sql: impl Into<String>,
         writer: Arc<dyn DataWriter>,
     ) -> Self {
-        Self { table_name: table_name.into(), data, sql: sql.into(), writer }
+        Self {
+            table_name: table_name.into(),
+            data,
+            sql: sql.into(),
+            writer,
+        }
     }
 }
 
@@ -311,7 +322,11 @@ pub struct BatchQueryConfig {
 
 impl Default for BatchQueryConfig {
     fn default() -> Self {
-        Self { concurrency: 4, show_progress: true, continue_on_error: true }
+        Self {
+            concurrency: 4,
+            show_progress: true,
+            continue_on_error: true,
+        }
     }
 }
 
@@ -327,11 +342,22 @@ pub struct PipelineStats {
 
 impl PipelineStats {
     fn new() -> Self {
-        Self { success_count: 0, error_count: 0, total_rows: 0 }
+        Self {
+            success_count: 0,
+            error_count: 0,
+            total_rows: 0,
+        }
     }
-    fn success(&mut self, rows: usize) { self.success_count += 1; self.total_rows += rows; }
-    fn error(&mut self) { self.error_count += 1; }
-    fn completed(&self) -> usize { self.success_count + self.error_count }
+    fn success(&mut self, rows: usize) {
+        self.success_count += 1;
+        self.total_rows += rows;
+    }
+    fn error(&mut self) {
+        self.error_count += 1;
+    }
+    fn completed(&self) -> usize {
+        self.success_count + self.error_count
+    }
 }
 
 // ============================= Pipeline Execution =========================== //
@@ -353,7 +379,10 @@ impl DataPipeline {
         let stats = Arc::new(RwLock::new(PipelineStats::new()));
 
         if self.config.show_progress {
-            println!("🚀 Processing {} queries (concurrency: {})", total, self.config.concurrency);
+            println!(
+                "🚀 Processing {} queries (concurrency: {})",
+                total, self.config.concurrency
+            );
         }
 
         // Begin all unique writers.
@@ -368,7 +397,9 @@ impl DataPipeline {
 
         loop {
             let chunk: Vec<_> = query_iter.by_ref().take(chunk_size).collect();
-            if chunk.is_empty() { break; }
+            if chunk.is_empty() {
+                break;
+            }
 
             let mut handles = Vec::with_capacity(chunk.len());
 
@@ -397,14 +428,22 @@ impl DataPipeline {
                                         stats.write().await.success(n);
                                         if show {
                                             let s = stats.read().await;
-                                            println!("✅ [{}/{}] {} - {} rows",
-                                                s.completed(), total, q.table_name, n);
+                                            println!(
+                                                "✅ [{}/{}] {} - {} rows",
+                                                s.completed(),
+                                                total,
+                                                q.table_name,
+                                                n
+                                            );
                                         }
                                     }
                                     Err(e) => {
                                         stats.write().await.error();
                                         if show {
-                                            eprintln!("❌ Write failed for {}: {}", q.table_name, e);
+                                            eprintln!(
+                                                "❌ Write failed for {}: {}",
+                                                q.table_name, e
+                                            );
                                         }
                                         if !continue_on_error {
                                             return Err(e);
@@ -414,10 +453,13 @@ impl DataPipeline {
                             }
                             Err(e) => {
                                 stats.write().await.error();
-                                let _ = q.writer.on_error(QueryError {
-                                    table_name: q.table_name.clone(),
-                                    error: format!("to_json: {e}"),
-                                }).await;
+                                let _ = q
+                                    .writer
+                                    .on_error(QueryError {
+                                        table_name: q.table_name.clone(),
+                                        error: format!("to_json: {e}"),
+                                    })
+                                    .await;
                                 if show {
                                     eprintln!("❌ Query failed for {}: {}", q.table_name, e);
                                 }
@@ -425,10 +467,13 @@ impl DataPipeline {
                         },
                         Err(e) => {
                             stats.write().await.error();
-                            let _ = q.writer.on_error(QueryError {
-                                table_name: q.table_name.clone(),
-                                error: format!("query: {e}"),
-                            }).await;
+                            let _ = q
+                                .writer
+                                .on_error(QueryError {
+                                    table_name: q.table_name.clone(),
+                                    error: format!("query: {e}"),
+                                })
+                                .await;
                             if show {
                                 eprintln!("❌ Query failed for {}: {}", q.table_name, e);
                             }
@@ -490,7 +535,9 @@ pub struct QueryBuilder {
 
 impl QueryBuilder {
     pub fn new() -> Self {
-        Self { queries: Vec::new() }
+        Self {
+            queries: Vec::new(),
+        }
     }
 
     pub fn add_query(
@@ -500,7 +547,8 @@ impl QueryBuilder {
         sql: impl Into<String>,
         writer: Arc<dyn DataWriter>,
     ) -> Self {
-        self.queries.push(TableQuery::new(table_name, data, sql, writer));
+        self.queries
+            .push(TableQuery::new(table_name, data, sql, writer));
         self
     }
 
@@ -512,7 +560,8 @@ impl QueryBuilder {
     ) -> Self {
         for (name, data) in tables {
             let sql = sql_template(&name);
-            self.queries.push(TableQuery::new(name, data, sql, writer.clone()));
+            self.queries
+                .push(TableQuery::new(name, data, sql, writer.clone()));
         }
         self
     }
@@ -523,7 +572,8 @@ impl QueryBuilder {
         writer: Arc<dyn DataWriter>,
     ) -> Self {
         for (name, data, sql) in queries {
-            self.queries.push(TableQuery::new(name, data, sql, writer.clone()));
+            self.queries
+                .push(TableQuery::new(name, data, sql, writer.clone()));
         }
         self
     }
