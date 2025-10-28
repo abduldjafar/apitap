@@ -12,7 +12,7 @@ use tokio_stream::StreamExt;
 //=============== Type Definitions ============================================//
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum PgType {
+pub enum PgType {
     Text,
     Boolean,
     BigInt,
@@ -62,6 +62,23 @@ impl PgType {
 
 //=============== PostgreSQL Auto-Columns Writer ==============================//
 
+#[derive(Debug, Clone)]
+pub enum PrimaryKey {
+    /// Single-column PK with an explicit postgres type
+    Single { name: String, ty: PgType },
+    /// Multi-column PK (composite)
+    Composite(Vec<(String, PgType)>),
+}
+
+impl PrimaryKey {
+    pub fn columns(&self) -> Vec<&str> {
+        match self {
+            PrimaryKey::Single { name, .. } => vec![name.as_str()],
+            PrimaryKey::Composite(cols) => cols.iter().map(|(n, _)| n.as_str()).collect(),
+        }
+    }
+}
+
 pub struct PostgresWriter {
     pool: PgPool,
     table_name: String,
@@ -71,6 +88,7 @@ pub struct PostgresWriter {
     pub auto_truncate: bool,
     table_created: tokio::sync::RwLock<bool>,
     columns_cache: tokio::sync::RwLock<Option<BTreeMap<String, PgType>>>,
+    primary_key: Option<String>,
 }
 
 impl PostgresWriter {
@@ -84,7 +102,13 @@ impl PostgresWriter {
             auto_truncate: false,
             table_created: tokio::sync::RwLock::new(false),
             columns_cache: tokio::sync::RwLock::new(None),
+            primary_key: None,
         }
+    }
+
+    pub fn with_primary_key_single(mut self, name: impl Into<String>) -> Self {
+        self.primary_key = Some(name.into());
+        self
     }
 
     pub fn with_batch_size(mut self, size: usize) -> Self {
@@ -170,37 +194,52 @@ impl PostgresWriter {
             return Err(Error::Datafusion("No columns detected".to_string()));
         }
 
-        // Quote every column name to avoid reserved-keyword collisions (e.g., "user")
         let column_defs: Vec<String> = schema
             .iter()
-            .map(|(name, pg_type)| format!("{} {}", Self::quote_ident(name), pg_type.as_sql()))
+            .map(|(name, pg_type)| format!(r#"{} {}"#, Self::quote_ident(name), pg_type.as_sql()))
             .collect();
 
-        // Quote table (and schema if present)
-        let table_sql = Self::quote_ident_path(&self.table_name);
+        let pk_clause: Option<String> = match &self.primary_key {
+            Some(pk_name) => {
+                if schema.contains_key(pk_name) {
+                    Some(format!(r#"PRIMARY KEY ({})"#, Self::quote_ident(pk_name)))
+                } else {
+                    tracing::warn!(
+                        "Primary key '{}' not found in schema for table '{}'; creating without PK",
+                        pk_name,
+                        self.table_name
+                    );
+                    None
+                }
+            }
+            None => None,
+        };
 
+        let mut all_parts = column_defs;
+        if let Some(pk) = pk_clause {
+            all_parts.push(pk);
+        }
+
+        let table_sql = Self::quote_ident_path(&self.table_name);
         let query = format!(
-            "CREATE TABLE IF NOT EXISTS {} (\n                {}\n            )",
+            "CREATE TABLE IF NOT EXISTS {} (\n    {}\n)",
             table_sql,
-            column_defs.join(",\n                ")
+            all_parts.join(",\n    ")
         );
 
         println!("{}", query);
-
         sqlx::query(&query)
             .execute(&self.pool)
             .await
             .map_err(|e| Error::Datafusion(format!("Create table: {}", e)))?;
 
         let column_names: Vec<String> = schema.keys().cloned().collect();
-
         println!(
             "✅ Created table: {} with {} columns: {}",
             self.table_name,
             column_names.len(),
             column_names.join(", ")
         );
-
         println!("   📋 Column types:");
         for (name, pg_type) in schema {
             println!("      - {}: {}", name, pg_type.as_sql());
