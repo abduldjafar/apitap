@@ -176,7 +176,6 @@ pub enum TotalHint {
 pub struct PaginatedFetcher {
     client: Client,
     base_url: String,
-    page_param_name: String,
     concurrency: usize,
     pagination_config: Pagination,
     batch_size: usize,
@@ -186,13 +185,11 @@ impl PaginatedFetcher {
     pub fn new(
         client: Client,
         base_url: impl Into<String>,
-        page_param_name: impl Into<String>,
         concurrency: usize,
     ) -> Self {
         Self {
             client,
             base_url: base_url.into(),
-            page_param_name: page_param_name.into(),
             concurrency,
             pagination_config: Pagination::Default,
             batch_size: 256,

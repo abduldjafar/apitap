@@ -19,6 +19,8 @@ async fn main() -> Result<()> {
     println!("✅ Connected to PostgreSQL");
 
     let http = Http::new("https://jsonplaceholder.typicode.com/posts");
+    let client = http.build_client();
+    let url = http.get_url();
 
     let pg_writer_config = PostgresWriter::new(pool.clone(), "jsonplaceholder_post")
         .with_primary_key_single("id")
@@ -38,11 +40,10 @@ async fn main() -> Result<()> {
         pg_writer_all_columns,
     ));
 
-    let client = http.build_client();
-    let url = http.get_url();
+
 
     let fetcher =
-        PaginatedFetcher::new(client.clone(), url.clone(), "page", /*concurrency=*/ 5)
+        PaginatedFetcher::new(client.clone(), url.clone(), /*concurrency=*/ 5)
             .with_limit_offset("_limit", "_start")
             .with_batch_size(256); // optional tuning
 
