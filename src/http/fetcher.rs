@@ -9,7 +9,6 @@ use reqwest::Client;
 use reqwest::header::CONTENT_TYPE;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::fmt::Write;
 use std::pin::Pin;
 use std::sync::Arc;
 use tokio_util::{

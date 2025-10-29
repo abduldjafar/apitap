@@ -1,7 +1,9 @@
+use async_trait::async_trait;
 use serde::{Deserialize, Deserializer, Serialize, de};
 use sqlx::PgPool;
 use std::collections::HashMap;
 
+use crate::errors::Result as CustomResult;
 use crate::http::fetcher::Pagination;
 
 // ================== Public types ==================
@@ -31,11 +33,38 @@ pub struct Source {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Target {
     Postgres(PostgresSink),
-    Bigquery(BigQuerySink),
 }
 
 pub enum TargetConn {
     Postgres { pool: PgPool, database: String },
+}
+
+#[async_trait]
+pub trait SinkConn {
+    async fn create_conn(&self) -> CustomResult<TargetConn>;
+}
+
+#[async_trait]
+impl SinkConn for Target {
+    async fn create_conn(&self) -> CustomResult<TargetConn> {
+        match self {
+            Target::Postgres(postgres_sink) => {
+                let username = postgres_sink.clone().auth.username;
+                let password = postgres_sink.clone().auth.password;
+
+                let host = postgres_sink.clone().host;
+                let database = postgres_sink.clone().database;
+
+                let database_url =
+                    format!("postgres://{}:{}@{}/{}", username, password, host, database);
+                let pool = PgPool::connect(&database_url).await?;
+                Ok(TargetConn::Postgres {
+                    pool: pool,
+                    database: database,
+                })
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -141,7 +170,6 @@ impl Named for Target {
     fn name(&self) -> &str {
         match self {
             Target::Postgres(x) => &x.name,
-            Target::Bigquery(x) => &x.name,
         }
     }
 }

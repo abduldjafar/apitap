@@ -5,7 +5,7 @@ sources:
     pagination:
       kind: limit_offset
       limit_param: _limit
-      offset_param: _param
+      offset_param: _start
 
 targets:
   - name: postgres_sink
@@ -15,9 +15,3 @@ targets:
       password: postgres
     host: localhost
     database: postgres
-
-  - name: bigquery_sink
-    type: bigquery
-    auth:
-      service_account_path: /home/sa.json
-    dataset: dbt_abdul
