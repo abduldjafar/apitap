@@ -744,7 +744,7 @@ impl PageWriter for DataFusionPageWriter {
                     table_name: format!("{}_page_{}", self.table_name, page_number),
                     data: result_stream,
                 },
-                crate::utils::datafusion_ext::WriteMode::Append,
+                write_mode,
             )
             .await?;
         Ok(())

@@ -307,167 +307,134 @@ impl PostgresWriter {
     }
 
     pub async fn merge_batch(
-        &self,
-        rows: &[Value],
-        schema: &BTreeMap<String, PgType>,
-    ) -> Result<()> {
-        // Nothing to do
-        if rows.is_empty() {
-            return Ok(());
-        }
-        if schema.is_empty() {
-            return Err(Error::Datafusion("No columns detected".to_string()));
-        }
+    &self,
+    rows: &[Value],
+    schema: &BTreeMap<String, PgType>,
+) -> Result<()> {
+    println!("Merging Data..");
 
-        // Primary key must be configured
-        let pk_name = self
-            .primary_key
-            .clone()
-            .ok_or_else(|| Error::Sqlx("Postgres: primary key not configured".to_string()))?;
-
-        // Column order (as they appear in `schema`)
-        let col_names_raw: Vec<&str> = schema.keys().map(|s| s.as_str()).collect();
-        let values_per_row = col_names_raw.len();
-
-        // Quoted column names:  "col"
-        let cols_t_quoted: Vec<String> =
-            col_names_raw.iter().map(|c| Self::quote_ident(c)).collect();
-
-        // Quoted column names with alias s:  s."col"
-        let cols_s_quoted: Vec<String> = col_names_raw
-            .iter()
-            .map(|c| format!("s.{}", Self::quote_ident(c)))
-            .collect();
-
-        let columns_t_str = cols_t_quoted.join(", ");
-        let columns_s_str = cols_s_quoted.join(", ");
-
-        // Build VALUES placeholders:
-        //   ($1, $2, $3), ($4, $5, $6), ...
-        let mut placeholders = Vec::with_capacity(rows.len());
-        for row_idx in 0..rows.len() {
-            let row_placeholders: Vec<String> = (1..=values_per_row)
-                .map(|col_idx| format!("${}", row_idx * values_per_row + col_idx))
-                .collect();
-            placeholders.push(format!("({})", row_placeholders.join(", ")));
-        }
-        let values_block = placeholders.join(",\n        ");
-
-        // Table name (quoted path, e.g., public."jsonplaceholder_post")
-        let table_sql = Self::quote_ident_path(&self.table_name);
-
-        // Quoted PK for t side and s side
-        let pk_t = format!(r#"t.{}"#, Self::quote_ident(&pk_name));
-        let pk_s = format!(r#"s.{}"#, Self::quote_ident(&pk_name));
-
-        // Build MERGE:
-        // - USING (VALUES ...) AS s(col1, col2, ...)
-        //   Note: column list after alias uses bare names (no alias prefix), but we still quote them.
-        let using_cols_str = cols_t_quoted.join(", ");
-
-        // Update ALL non-PK columns via tuple assignment:
-        //   SET ("c1","c2",...) = (s."c1", s."c2", ...)
-        // If PK is among the list, exclude it from the update set.
-        let non_pk_idx: Vec<usize> = col_names_raw
-            .iter()
-            .enumerate()
-            .filter(|(_, c)| **c != pk_name.as_str())
-            .map(|(i, _)| i)
-            .collect();
-
-        let set_target = if non_pk_idx.is_empty() {
-            String::new()
-        } else {
-            let left = non_pk_idx
-                .iter()
-                .map(|&i| &cols_t_quoted[i])
-                .cloned()
-                .collect::<Vec<_>>()
-                .join(", ");
-            let right = non_pk_idx
-                .iter()
-                .map(|&i| &cols_s_quoted[i])
-                .cloned()
-                .collect::<Vec<_>>()
-                .join(", ");
-
-            format!(r#"SET ({}) = ({})"#, left, right)
-        };
-
-        // Final SQL
-        // WHEN MATCHED: update all non-PK columns (if any)
-        // WHEN NOT MATCHED: insert every column
-        let query = if set_target.is_empty() {
-            format!(
-                r#"
-                MERGE INTO {table} AS t
-                USING (VALUES
-                        {values}
-                ) AS s({using_cols})
-                ON {pk_t} = {pk_s}
-                WHEN NOT MATCHED THEN
-                INSERT ({cols})
-                VALUES ({cols_s});
-                "#,
-                table = table_sql,
-                values = values_block,
-                using_cols = using_cols_str,
-                pk_t = pk_t,
-                pk_s = pk_s,
-                cols = columns_t_str,
-                cols_s = columns_s_str,
-            )
-        } else {
-            format!(
-                r#"
-                MERGE INTO {table} AS t
-                USING (VALUES
-                        {values}
-                ) AS s({using_cols})
-                ON {pk_t} = {pk_s}
-                WHEN MATCHED THEN
-                {set_target}
-                WHEN NOT MATCHED THEN
-                INSERT ({cols})
-                VALUES ({cols_s});
-                "#,
-                table = table_sql,
-                values = values_block,
-                using_cols = using_cols_str,
-                pk_t = pk_t,
-                pk_s = pk_s,
-                set_target = set_target,
-                cols = columns_t_str,
-                cols_s = columns_s_str,
-            )
-        };
-
-        // Flatten JSON rows into bind values in column order
-        let mut all_values = Vec::with_capacity(rows.len() * values_per_row);
-        for row in rows {
-            for col in &col_names_raw {
-                let v = row.get(*col).cloned().unwrap_or(Value::Null);
-                all_values.push(v);
-            }
-        }
-
-        // Bind in the same order as placeholders
-        let mut q = sqlx::query(&query);
-        for (idx, value) in all_values.iter().enumerate() {
-            let col_idx = idx % values_per_row;
-            let col_name = col_names_raw[col_idx];
-            let expected = schema
-                .get(col_name)
-                .expect("schema must contain column present in rows");
-            q = self.bind_value(q, value, expected)?;
-        }
-
-        q.execute(&self.pool)
-            .await
-            .map_err(|e| Error::Datafusion(format!("PostgreSQL MERGE: {}", e)))?;
-
-        Ok(())
+    if rows.is_empty() {
+        return Ok(());
     }
+    if schema.is_empty() {
+        return Err(Error::Datafusion("No columns detected".to_string()));
+    }
+
+    let pk_name = self
+        .primary_key
+        .clone()
+        .ok_or_else(|| Error::Sqlx("Postgres: primary key not configured".to_string()))?;
+
+    let col_names_raw: Vec<&str> = schema.keys().map(|s| s.as_str()).collect();
+    let values_per_row = col_names_raw.len();
+
+    let cols_t_quoted: Vec<String> = col_names_raw.iter().map(|c| Self::quote_ident(c)).collect();
+    let cols_s_quoted: Vec<String> = col_names_raw
+        .iter()
+        .map(|c| format!("s.{}", Self::quote_ident(c)))
+        .collect();
+
+    let columns_t_str = cols_t_quoted.join(", ");
+    let columns_s_str = cols_s_quoted.join(", ");
+
+    let mut placeholders = Vec::with_capacity(rows.len());
+    for row_idx in 0..rows.len() {
+        let row_placeholders: Vec<String> = (1..=values_per_row)
+            .map(|col_idx| format!("${}", row_idx * values_per_row + col_idx))
+            .collect();
+        placeholders.push(format!("({})", row_placeholders.join(", ")));
+    }
+    let values_block = placeholders.join(",\n        ");
+
+    let table_sql = Self::quote_ident_path(&self.table_name);
+    let pk_t = format!(r#"t.{}"#, Self::quote_ident(&pk_name));
+    let pk_s = format!(r#"s.{}"#, Self::quote_ident(&pk_name));
+
+    let using_cols_str = cols_t_quoted.join(", ");
+
+    // build UPDATE SET for all non-PK columns
+    let non_pk_idx: Vec<usize> = col_names_raw
+        .iter()
+        .enumerate()
+        .filter(|(_, c)| **c != pk_name.as_str())
+        .map(|(i, _)| i)
+        .collect();
+
+    let set_clause = if non_pk_idx.is_empty() {
+        None
+    } else {
+        let left = non_pk_idx.iter().map(|&i| &cols_t_quoted[i]).cloned().collect::<Vec<_>>().join(", ");
+        let right = non_pk_idx.iter().map(|&i| &cols_s_quoted[i]).cloned().collect::<Vec<_>>().join(", ");
+        Some(format!(r#"UPDATE SET ({}) = ({})"#, left, right)) // <-- ADD "UPDATE"
+    };
+
+    let query = match set_clause {
+        Some(set) => format!(
+            r#"
+MERGE INTO {table} AS t
+USING (VALUES
+        {values}
+) AS s({using_cols})
+ON {pk_t} = {pk_s}
+WHEN MATCHED THEN
+  {set}
+WHEN NOT MATCHED THEN
+  INSERT ({cols})
+  VALUES ({cols_s});
+"#,
+            table = table_sql,
+            values = values_block,
+            using_cols = using_cols_str,
+            pk_t = pk_t,
+            pk_s = pk_s,
+            set = set,
+            cols = columns_t_str,
+            cols_s = columns_s_str,
+        ),
+        None => format!(
+            r#"
+MERGE INTO {table} AS t
+USING (VALUES
+        {values}
+) AS s({using_cols})
+ON {pk_t} = {pk_s}
+WHEN NOT MATCHED THEN
+  INSERT ({cols})
+  VALUES ({cols_s});
+"#,
+            table = table_sql,
+            values = values_block,
+            using_cols = using_cols_str,
+            pk_t = pk_t,
+            pk_s = pk_s,
+            cols = columns_t_str,
+            cols_s = columns_s_str,
+        ),
+    };
+
+    // bind values in column order
+    let mut all_values = Vec::with_capacity(rows.len() * values_per_row);
+    for row in rows {
+        for col in &col_names_raw {
+            all_values.push(row.get(*col).cloned().unwrap_or(Value::Null));
+        }
+    }
+
+    let mut q = sqlx::query(&query);
+    for (idx, value) in all_values.iter().enumerate() {
+        let col_idx = idx % values_per_row;
+        let col_name = col_names_raw[col_idx];
+        let expected = schema.get(col_name).expect("schema must contain column present in rows");
+        q = self.bind_value(q, value, expected)?;
+    }
+
+    q.execute(&self.pool)
+        .await
+        .map_err(|e| Error::Datafusion(format!("PostgreSQL MERGE: {}", e)))?;
+
+    Ok(())
+}
+
 
     pub async fn insert_batch(
         &self,

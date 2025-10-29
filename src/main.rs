@@ -25,7 +25,7 @@ async fn main() -> Result<()> {
         .with_batch_size(50)
         .with_sample_size(10)
         .auto_create(true)
-        .auto_truncate(true);
+        .auto_truncate(false);
 
     if pg_writer_config.auto_truncate {
         pg_writer_config.truncate().await?;
@@ -54,7 +54,7 @@ async fn main() -> Result<()> {
             None, // where array of items lives
             None,
             page_writer_all, // sink
-            WriteMode::Append
+            WriteMode::Merge
         )
         .await?;
 
