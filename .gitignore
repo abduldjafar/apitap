@@ -23,4 +23,5 @@ target
 
 # Added by cargo
 .env
-/target
+/
+*.backup

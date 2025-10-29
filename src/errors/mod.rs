@@ -13,6 +13,7 @@ pub enum Error {
     Arrow(String),
     Parquet(String),
     SerdeArrow(String),
+    SerdeYaml(String),
 }
 
 impl core::fmt::Display for Error {
@@ -35,4 +36,5 @@ crate::impl_from_error!(
     datafusion::arrow::error::ArrowError => Arrow,
     datafusion::parquet::errors::ParquetError => Parquet,
     serde_arrow::Error=>SerdeArrow,
+    serde_yaml::Error=>SerdeYaml
 );

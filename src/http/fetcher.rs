@@ -1,13 +1,13 @@
 // src/utils/http_fetcher.rs
 use crate::errors::{Error, Result};
-use crate::utils::datafusion_ext::{
-    DataFrameExt, DataWriter, JsonValueExt, QueryResult, QueryResultStream, WriteMode,
-};
+use crate::utils::datafusion_ext::{DataFrameExt, JsonValueExt, QueryResult, QueryResultStream};
+use crate::writer::{DataWriter, WriteMode};
 use async_trait::async_trait;
 use futures::Stream;
 use futures::stream::{self, BoxStream, StreamExt, TryStreamExt};
 use reqwest::Client;
 use reqwest::header::CONTENT_TYPE;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fmt::Write;
 use std::pin::Pin;
@@ -117,7 +117,12 @@ pub async fn ndjson_stream_qs(
 
 #[async_trait]
 pub trait PageWriter: Send + Sync {
-    async fn write_page(&self, page_number: u64, data: Vec<Value>,_write_mode:WriteMode) -> Result<()>;
+    async fn write_page(
+        &self,
+        page_number: u64,
+        data: Vec<Value>,
+        _write_mode: WriteMode,
+    ) -> Result<()>;
 
     async fn write_page_stream(
         &self,
@@ -142,7 +147,8 @@ pub trait PageWriter: Send + Sync {
 
 // =========================== Pagination types ================================
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Pagination {
     LimitOffset {
         limit_param: String,
@@ -182,11 +188,7 @@ pub struct PaginatedFetcher {
 }
 
 impl PaginatedFetcher {
-    pub fn new(
-        client: Client,
-        base_url: impl Into<String>,
-        concurrency: usize,
-    ) -> Self {
+    pub fn new(client: Client, base_url: impl Into<String>, concurrency: usize) -> Self {
         Self {
             client,
             base_url: base_url.into(),
@@ -234,7 +236,7 @@ impl PaginatedFetcher {
         data_path: Option<&str>,
         total_hint: Option<TotalHint>,
         writer: Arc<dyn PageWriter>,
-        write_mode:WriteMode
+        write_mode: WriteMode,
     ) -> Result<FetchStats> {
         let (limit_param, offset_param) = match &self.pagination_config {
             Pagination::LimitOffset {
@@ -272,7 +274,7 @@ impl PaginatedFetcher {
         if let Some(p) = data_path {
             if let Some(arr) = first_json.pointer(p).and_then(|v| v.as_array()).cloned() {
                 let n = arr.len();
-                writer.write_page(0, arr,write_mode.clone()).await?;
+                writer.write_page(0, arr, write_mode.clone()).await?;
                 stats.add_page(0, n);
                 wrote_first = true;
             }
@@ -289,7 +291,7 @@ impl PaginatedFetcher {
                 data_path,
             )
             .await?;
-            self.write_streamed_page(0, &mut s, &*writer, &mut stats,write_mode.clone())
+            self.write_streamed_page(0, &mut s, &*writer, &mut stats, write_mode.clone())
                 .await?;
         }
 
@@ -316,7 +318,7 @@ impl PaginatedFetcher {
                 &offset_param,
                 writer.clone(),
                 &mut stats,
-                write_mode.clone()
+                write_mode.clone(),
             )
             .await
         } else {
@@ -328,7 +330,7 @@ impl PaginatedFetcher {
                 &offset_param,
                 writer.clone(),
                 &mut stats,
-                write_mode.clone()
+                write_mode.clone(),
             )
             .await
         };
@@ -345,7 +347,7 @@ impl PaginatedFetcher {
         data_path: Option<&str>,
         total_hint: Option<TotalHint>,
         writer: Arc<dyn PageWriter>,
-        write_mode:WriteMode
+        write_mode: WriteMode,
     ) -> Result<FetchStats> {
         let (page_param, per_page_param) = match &self.pagination_config {
             Pagination::PageNumber {
@@ -383,7 +385,7 @@ impl PaginatedFetcher {
         if let Some(p) = data_path {
             if let Some(arr) = first_json.pointer(p).and_then(|v| v.as_array()).cloned() {
                 let n = arr.len();
-                writer.write_page(1, arr,write_mode.clone()).await?;
+                writer.write_page(1, arr, write_mode.clone()).await?;
                 stats.add_page(1, n);
                 wrote_first = true;
             }
@@ -399,7 +401,7 @@ impl PaginatedFetcher {
                 data_path,
             )
             .await?;
-            self.write_streamed_page(1, &mut s, &*writer, &mut stats,write_mode.clone())
+            self.write_streamed_page(1, &mut s, &*writer, &mut stats, write_mode.clone())
                 .await?;
         }
 
@@ -462,7 +464,9 @@ impl PaginatedFetcher {
                                     buf.push(v);
                                     if buf.len() == batch_size {
                                         let out = std::mem::take(&mut buf);
-                                        if let Err(e) = writer.write_page(page, out,write_mode_c.clone()).await {
+                                        if let Err(e) =
+                                            writer.write_page(page, out, write_mode_c.clone()).await
+                                        {
                                             let _ = writer.on_page_error(page, e.to_string()).await;
                                         }
                                     }
@@ -474,7 +478,8 @@ impl PaginatedFetcher {
                         }
                         if !buf.is_empty() {
                             let out = std::mem::take(&mut buf);
-                            if let Err(e) = writer.write_page(page, out,write_mode_c.clone()).await {
+                            if let Err(e) = writer.write_page(page, out, write_mode_c.clone()).await
+                            {
                                 let _ = writer.on_page_error(page, e.to_string()).await;
                             }
                         }
@@ -506,7 +511,7 @@ impl PaginatedFetcher {
                 };
 
                 let wrote = self
-                    .write_streamed_page(page, &mut s, &*writer, &mut stats,write_mode.clone())
+                    .write_streamed_page(page, &mut s, &*writer, &mut stats, write_mode.clone())
                     .await?;
                 if wrote == 0 {
                     break;
@@ -527,7 +532,7 @@ impl PaginatedFetcher {
         s: &mut BoxStream<'static, Result<Value>>,
         writer: &dyn PageWriter,
         stats: &mut FetchStats,
-        write_mode:WriteMode
+        write_mode: WriteMode,
     ) -> Result<usize> {
         let mut buf = Vec::with_capacity(self.batch_size);
         let mut written = 0usize;
@@ -539,7 +544,7 @@ impl PaginatedFetcher {
                     if buf.len() == self.batch_size {
                         let count = buf.len();
                         let out = std::mem::take(&mut buf);
-                        writer.write_page(page, out,write_mode.clone()).await?;
+                        writer.write_page(page, out, write_mode.clone()).await?;
                         stats.add_page(page, count);
                         written += count;
                     }
@@ -552,7 +557,7 @@ impl PaginatedFetcher {
         if !buf.is_empty() {
             let count = buf.len();
             let out = std::mem::take(&mut buf);
-            writer.write_page(page, out,write_mode).await?;
+            writer.write_page(page, out, write_mode).await?;
             stats.add_page(page, count);
             written += count;
         }
@@ -568,7 +573,7 @@ impl PaginatedFetcher {
         offset_param: &str,
         writer: Arc<dyn PageWriter>,
         stats: &mut FetchStats,
-        write_mode:WriteMode
+        write_mode: WriteMode,
     ) -> Result<()> {
         // We already wrote offset=0 ⇒ remaining i=1..pages-1 (offset = i*limit)
         let client = self.client.clone();
@@ -616,7 +621,9 @@ impl PaginatedFetcher {
                                 buf.push(v);
                                 if buf.len() == batch_size {
                                     let out = std::mem::take(&mut buf);
-                                    if let Err(e) = writer.write_page(i, out,write_mode_clone.clone()).await {
+                                    if let Err(e) =
+                                        writer.write_page(i, out, write_mode_clone.clone()).await
+                                    {
                                         let _ = writer.on_page_error(i, e.to_string()).await;
                                     }
                                 }
@@ -628,7 +635,7 @@ impl PaginatedFetcher {
                     }
                     if !buf.is_empty() {
                         let out = std::mem::take(&mut buf);
-                        if let Err(e) = writer.write_page(i, out,write_mode_clone.clone()).await {
+                        if let Err(e) = writer.write_page(i, out, write_mode_clone.clone()).await {
                             let _ = writer.on_page_error(i, e.to_string()).await;
                         }
                     }
@@ -649,7 +656,7 @@ impl PaginatedFetcher {
         offset_param: &str,
         writer: Arc<dyn PageWriter>,
         stats: &mut FetchStats,
-        write_mode:WriteMode,
+        write_mode: WriteMode,
     ) -> Result<()> {
         let mut i = 1u64; // we already handled offset=0
         loop {
@@ -672,7 +679,9 @@ impl PaginatedFetcher {
                 }
             };
 
-            let wrote = self.write_streamed_page(i, &mut s, &*writer, stats,write_mode.clone()).await?;
+            let wrote = self
+                .write_streamed_page(i, &mut s, &*writer, stats, write_mode.clone())
+                .await?;
             if wrote == 0 {
                 break;
             }
@@ -731,7 +740,12 @@ impl DataFusionPageWriter {
 
 #[async_trait]
 impl PageWriter for DataFusionPageWriter {
-    async fn write_page(&self, page_number: u64, data: Vec<Value>,write_mode:WriteMode) -> Result<()> {
+    async fn write_page(
+        &self,
+        page_number: u64,
+        data: Vec<Value>,
+        write_mode: WriteMode,
+    ) -> Result<()> {
         let json_array = Value::Array(data);
         let sdf = json_array.to_sql(&self.table_name, &self.sql).await?;
         let result_stream = sdf.inner().to_stream().await?;
@@ -796,7 +810,12 @@ impl BatchedPageWriter {
 
 #[async_trait]
 impl PageWriter for BatchedPageWriter {
-    async fn write_page(&self, _page_number: u64, data: Vec<Value>,write_mode:WriteMode) -> Result<()> {
+    async fn write_page(
+        &self,
+        _page_number: u64,
+        data: Vec<Value>,
+        write_mode: WriteMode,
+    ) -> Result<()> {
         let mut buf = self.buffer.write().await;
         buf.extend(data);
         if buf.len() >= self.batch_size {
@@ -829,7 +848,12 @@ impl MemoryPageWriter {
 }
 #[async_trait]
 impl PageWriter for MemoryPageWriter {
-    async fn write_page(&self, _page_number: u64, data: Vec<Value>,write_mode:WriteMode) -> Result<()> {
+    async fn write_page(
+        &self,
+        _page_number: u64,
+        data: Vec<Value>,
+        write_mode: WriteMode,
+    ) -> Result<()> {
         self.data.write().await.extend(data);
         Ok(())
     }
