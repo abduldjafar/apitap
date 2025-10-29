@@ -257,13 +257,23 @@ pub struct QueryError {
 
 // =============================== Writer Trait =============================== //
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum WriteMode {
+    Merge,
+    Append,
+}
+
 #[async_trait]
 pub trait DataWriter: Send + Sync {
     /// Write query result to destination (in-memory).
     async fn write(&self, result: QueryResult) -> Result<()>;
 
     /// Write query result to destination (streaming).
-    async fn write_stream(&self, _result: QueryResultStream) -> Result<()> {
+    async fn write_stream(&self, _result: QueryResultStream, _write_mode: WriteMode) -> Result<()> {
+        Ok(())
+    }
+
+    async fn merge(&self, _result: QueryResultStream) -> Result<()> {
         Ok(())
     }
 
@@ -627,7 +637,11 @@ impl PostgresWriter {
 
 #[async_trait]
 impl DataWriter for PostgresWriter {
-    async fn write_stream(&self, mut result: QueryResultStream) -> Result<()> {
+    async fn write_stream(
+        &self,
+        mut result: QueryResultStream,
+        write_mode: WriteMode,
+    ) -> Result<()> {
         while let Some(item) = result.data.next().await {
             sqlx::query("INSERT INTO my_table (data) VALUES ($1)")
                 .bind(item?.to_string()) // enable `sqlx` JSON feature to bind Value directly

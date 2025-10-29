@@ -2,10 +2,9 @@
 use apitap::{
     errors::Result,
     http::{
-        Http,
-        fetcher::{DataFusionPageWriter, PaginatedFetcher},
+        fetcher::{DataFusionPageWriter, PaginatedFetcher}, Http
     },
-    utils::datafusion_ext::{DataFrameExt, JsonValueExt},
+    utils::datafusion_ext::{DataFrameExt, JsonValueExt, WriteMode},
     writer::postgres::PostgresWriter,
 };
 
@@ -55,6 +54,7 @@ async fn main() -> Result<()> {
             None, // where array of items lives
             None,
             page_writer_all, // sink
+            WriteMode::Append
         )
         .await?;
 

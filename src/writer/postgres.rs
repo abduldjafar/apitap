@@ -1,7 +1,7 @@
 // src/utils/postgres_writer.rs
 
 use crate::errors::{Error, Result};
-use crate::utils::datafusion_ext::{DataWriter, QueryResult, QueryResultStream};
+use crate::utils::datafusion_ext::{DataWriter, QueryResult, QueryResultStream, WriteMode};
 use async_trait::async_trait;
 use serde_json::Value;
 use sqlx::{PgPool, types::Json};
@@ -307,7 +307,7 @@ impl PostgresWriter {
     }
 
     pub async fn merge_batch(
-        &mut self,
+        &self,
         rows: &[Value],
         schema: &BTreeMap<String, PgType>,
     ) -> Result<()> {
@@ -614,31 +614,60 @@ impl PostgresWriter {
 
 #[async_trait]
 impl DataWriter for PostgresWriter {
-    async fn write_stream(&self, mut result: QueryResultStream) -> Result<()> {
+    async fn write_stream(
+        &self,
+        mut result: QueryResultStream,
+        write_mode: WriteMode,
+    ) -> Result<()> {
+        // Local macro: write one chunk with the chosen mode
+        macro_rules! write_chunk {
+            ($buf:expr, $schema:expr) => {
+                match write_mode {
+                    WriteMode::Append => self.insert_batch($buf, $schema).await,
+                    WriteMode::Merge => self.merge_batch($buf, $schema).await,
+                }
+            };
+        }
+
         let mut buf: Vec<serde_json::Value> = Vec::with_capacity(self.batch_size);
-        let mut schema: Option<BTreeMap<String, PgType>> = None; // whatever type your ensure_table returns
+        let mut schema: Option<BTreeMap<String, PgType>> = None;
 
+        // Helper to ensure schema once (from current buffer)
+        async fn ensure_schema_once<F>(
+            schema: &mut Option<BTreeMap<String, PgType>>,
+            with: F,
+        ) -> Result<()>
+        where
+            F: FnOnce() -> Result<BTreeMap<String, PgType>>,
+        {
+            if schema.is_none() {
+                *schema = Some(with()?);
+            }
+            Ok(())
+        }
+
+        // Stream → buffer → write in batches
         while let Some(item) = result.data.next().await {
-            let v = item?; // serde_json::Value
-
-            buf.push(v);
+            buf.push(item?);
 
             if buf.len() >= self.batch_size {
+                // Lazily infer/create table schema from current batch
                 if schema.is_none() {
                     schema = Some(self.ensure_table(&buf).await?);
                 }
-
-                self.insert_batch(&buf, schema.as_ref().unwrap()).await?;
+                let schema_ref = schema.as_ref().expect("schema just set");
+                write_chunk!(&buf, schema_ref)?;
                 buf.clear();
             }
         }
 
-        // Flush remaining
+        // Flush remainder
         if !buf.is_empty() {
             if schema.is_none() {
                 schema = Some(self.ensure_table(&buf).await?);
             }
-            self.insert_batch(&buf, schema.as_ref().unwrap()).await?;
+            let schema_ref = schema.as_ref().expect("schema just set");
+            write_chunk!(&buf, schema_ref)?;
         }
 
         Ok(())
