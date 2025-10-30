@@ -612,20 +612,6 @@ impl DataWriter for PostgresWriter {
         let mut buf: Vec<serde_json::Value> = Vec::with_capacity(self.batch_size);
         let mut schema: Option<BTreeMap<String, PgType>> = None;
 
-        // Helper to ensure schema once (from current buffer)
-        async fn ensure_schema_once<F>(
-            schema: &mut Option<BTreeMap<String, PgType>>,
-            with: F,
-        ) -> Result<()>
-        where
-            F: FnOnce() -> Result<BTreeMap<String, PgType>>,
-        {
-            if schema.is_none() {
-                *schema = Some(with()?);
-            }
-            Ok(())
-        }
-
         // Stream → buffer → write in batches
         while let Some(item) = result.data.next().await {
             buf.push(item?);
