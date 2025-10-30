@@ -14,7 +14,8 @@ pub enum Error {
     Parquet(String),
     SerdeArrow(String),
     SerdeYaml(String),
-    WalkDir(String)
+    WalkDir(String),
+    Minijinja(String)
 }
 
 impl core::fmt::Display for Error {
@@ -38,5 +39,6 @@ crate::impl_from_error!(
     datafusion::parquet::errors::ParquetError => Parquet,
     serde_arrow::Error=>SerdeArrow,
     serde_yaml::Error=>SerdeYaml,
-    walkdir::Error=>WalkDir
+    walkdir::Error=>WalkDir,
+    minijinja::Error=>Minijinja
 );
