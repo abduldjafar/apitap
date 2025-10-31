@@ -189,5 +189,5 @@ impl Named for Target {
 // Enable your templates to call `{{ source("json_place_holder") }}`
 // and `{{ sink("postgres_sink") }}` to choose a YAML target by name.
 
-pub mod sink;
 pub mod run;
+pub mod sink;

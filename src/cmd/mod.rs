@@ -1,12 +1,14 @@
 use std::sync::{Arc, Mutex};
 
 use crate::config::load_config_from_path;
-use crate::config::templating::{RenderCapture, build_env_with_captures, list_sql_templates, render_one};
+use crate::config::templating::{
+    RenderCapture, build_env_with_captures, list_sql_templates, render_one,
+};
 use crate::errors::{self, Result};
 use crate::http::Http;
 use crate::pipeline::SinkConn;
 use crate::pipeline::run::{FetchOpts, run_fetch};
-use crate::pipeline::sink::{WriterOpts, MakeWriter};
+use crate::pipeline::sink::{MakeWriter, WriterOpts};
 use crate::writer::WriteMode;
 use clap::Parser;
 
@@ -19,14 +21,23 @@ const FETCH_BATCH_SIZE: usize = 256;
 #[command(name = "apitap-run", version)]
 pub struct Cli {
     /// Folder containing SQL templates (Minijinja)
-    #[arg(long = "modules", short = 'm', default_value = "pipelines", value_name = "DIR")]
+    #[arg(
+        long = "modules",
+        short = 'm',
+        default_value = "pipelines",
+        value_name = "DIR"
+    )]
     pub modules: String,
 
     /// YAML config file
-    #[arg(long = "yaml-config", short = 'y', default_value = "pipelines.yaml", value_name = "FILE")]
+    #[arg(
+        long = "yaml-config",
+        short = 'y',
+        default_value = "pipelines.yaml",
+        value_name = "FILE"
+    )]
     pub yaml_config: String,
 }
-
 
 /// Run all templates under `root` using configuration from `cfg_path`.
 pub async fn run_pipeline(root: &str, cfg_path: &str) -> Result<()> {
@@ -49,7 +60,7 @@ pub async fn run_pipeline(root: &str, cfg_path: &str) -> Result<()> {
     for name in names {
         let rendered = render_one(&env, &capture, &name)?;
         let source_name = &rendered.capture.source;
-        let sink_name   = &rendered.capture.sink;
+        let sink_name = &rendered.capture.sink;
 
         println!("\n=== {name} ===");
         println!("source : {source_name}");
@@ -64,10 +75,9 @@ pub async fn run_pipeline(root: &str, cfg_path: &str) -> Result<()> {
         })?;
 
         // HTTP client
-        let http   = Http::new(src.url.clone());
+        let http = Http::new(src.url.clone());
         let client = http.build_client();
-        let url    = reqwest::Url::parse(&http.get_url())?;
-
+        let url = reqwest::Url::parse(&http.get_url())?;
 
         // Destination table + inject into SQL
         let dest_table = src.table_destination_name.as_deref().ok_or_else(|| {
@@ -105,7 +115,8 @@ pub async fn run_pipeline(root: &str, cfg_path: &str) -> Result<()> {
             writer,
             writer_opts.write_mode,
             &fetch_opts,
-        ).await?;
+        )
+        .await?;
 
         println!("✅ Done: {name}");
     }

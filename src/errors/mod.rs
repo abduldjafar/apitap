@@ -16,7 +16,7 @@ pub enum Error {
     SerdeYaml(String),
     WalkDir(String),
     Minijinja(String),
-    UrlParseError(String)
+    UrlParseError(String),
 }
 
 impl core::fmt::Display for Error {

@@ -2,13 +2,13 @@ use std::pin::Pin;
 // src/pipeline/sink.rs (new file or tuck into templating.rs’ neighbor)
 use std::sync::Arc;
 
+use crate::errors::{Error, Result};
 use crate::pipeline::TargetConn;
 use crate::writer::postgres::PostgresWriter;
 use crate::writer::{DataWriter, WriteMode};
-use crate::errors::{Result,Error};
 
 pub type HookFuture = Pin<Box<dyn Future<Output = Result<()>> + Send + 'static>>;
-pub type Hook       = Box<dyn FnOnce() -> HookFuture + Send>;
+pub type Hook = Box<dyn FnOnce() -> HookFuture + Send>;
 
 #[derive(Debug, Clone)]
 pub struct WriterOpts<'a> {

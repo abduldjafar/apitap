@@ -1,6 +1,5 @@
-use apitap::{cmd::run_pipeline, errors::Result,cmd::Cli};
+use apitap::{cmd::Cli, cmd::run_pipeline, errors::Result};
 use clap::Parser;
-
 
 #[tokio::main]
 async fn main() -> Result<()> {
