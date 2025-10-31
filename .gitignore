@@ -22,5 +22,8 @@ target
 
 
 # Added by cargo
-
-/target
+.env
+/
+*.backup
+testing.sql
+pipelines

@@ -1,0 +1,17 @@
+sources:
+  - name: json_place_holder
+    url: https://jsonplaceholder.typicode.com/posts
+    table_destination_name: posts
+    pagination:
+      kind: limit_offset
+      limit_param: _limit
+      offset_param: _start
+
+targets:
+  - name: postgres_sink
+    type: postgres
+    auth:
+      username: postgres
+      password: postgres
+    host: localhost
+    database: postgres
