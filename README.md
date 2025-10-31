@@ -134,16 +134,6 @@ targets:
 
 ### 4) Run
 
-```bash
-# defaults: --modules ./pipelines --yaml-config ./pipelines.yaml
-cargo run --bin apitap-run --release
-
-# or explicit
-cargo run --bin apitap-run --release -- \
-  --modules ./pipelines \
-  --yaml-config ./pipelines.yaml
-```
-
 The runner:
 
 * discovers `.sql` under `--modules`
@@ -219,7 +209,7 @@ You can register more Minijinja helpers (e.g., `use_schema("...")`, `mode("appen
 ## ⚙️ CLI
 
 ```
-apitap-run --modules <DIR> --yaml-config <FILE>
+apitap --modules <DIR> --yaml-config <FILE>
 ```
 
 * `--modules, -m` (default: `pipelines`) — Folder of SQL templates
@@ -280,7 +270,7 @@ cargo test
 Run a pipeline:
 
 ```bash
-cargo run --bin apitap-run -- --modules ./pipelines --yaml-config ./pipelines.yaml
+cargo run -- --modules ./pipelines --yaml-config ./pipelines.yaml
 ```
 
 ---
