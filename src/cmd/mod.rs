@@ -52,9 +52,6 @@ pub async fn run_pipeline(root: &str, cfg_path: &str) -> Result<()> {
         let source_name = &rendered.capture.source;
         let sink_name = &rendered.capture.sink;
 
-        println!("\n=== {name} ===");
-        println!("source : {source_name}");
-        println!("sink   : {sink_name}");
 
         let src = cfg.source(source_name).ok_or_else(|| {
             errors::Error::Reqwest(format!("source not found in config: {source_name}"))
@@ -103,7 +100,6 @@ pub async fn run_pipeline(root: &str, cfg_path: &str) -> Result<()> {
         )
         .await?;
 
-        println!("✅ Done: {name}");
     }
 
     Ok(())

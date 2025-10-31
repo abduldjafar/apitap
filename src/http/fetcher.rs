@@ -132,7 +132,7 @@ pub trait PageWriter: Send + Sync {
     }
 
     async fn on_page_error(&self, page_number: u64, error: String) -> Result<()> {
-        eprintln!("❌ Error fetching page {}: {}", page_number, error);
+        tracing::error!("❌ Error fetching page {}: {}", page_number, error);
         Ok(())
     }
 

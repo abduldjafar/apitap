@@ -227,23 +227,21 @@ impl PostgresWriter {
             table_sql,
             all_parts.join(",\n    ")
         );
-
-        println!("{}", query);
         sqlx::query(&query)
             .execute(&self.pool)
             .await
             .map_err(|e| Error::Datafusion(format!("Create table: {}", e)))?;
 
         let column_names: Vec<String> = schema.keys().cloned().collect();
-        println!(
+        tracing::info!(
             "✅ Created table: {} with {} columns: {}",
             self.table_name,
             column_names.len(),
             column_names.join(", ")
         );
-        println!("   📋 Column types:");
+        tracing::info!("   📋 Column types:");
         for (name, pg_type) in schema {
-            println!("      - {}: {}", name, pg_type.as_sql());
+            tracing::info!("      - {}: {}", name, pg_type.as_sql());
         }
 
         Ok(())
@@ -286,8 +284,8 @@ impl PostgresWriter {
         let table_sql = Self::quote_ident(&self.table_name);
         let sql = format!("TRUNCATE TABLE {}", table_sql);
 
-        println!("Truncating {}...", self.table_name);
-        println!("{}", sql);
+        tracing::info!("Truncating {}...", self.table_name);
+        tracing::info!("{}", sql);
 
         match sqlx::query(&sql).execute(&self.pool).await {
             Ok(_) => Ok(()),
@@ -295,7 +293,7 @@ impl PostgresWriter {
                 // emulate IF EXISTS: swallow "undefined_table" (42P01)
                 if let Some(db_err) = e.as_database_error() {
                     if db_err.code() == Some(Cow::Borrowed("42P01")) {
-                        eprintln!(
+                        tracing::error!(
                             "Table {} does not exist, skipping TRUNCATE.",
                             self.table_name
                         );
@@ -312,7 +310,7 @@ impl PostgresWriter {
         rows: &[Value],
         schema: &BTreeMap<String, PgType>,
     ) -> Result<()> {
-        println!("Merging Data..");
+        tracing::info!("Merging Data..");
 
         if rows.is_empty() {
             return Ok(());

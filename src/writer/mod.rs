@@ -29,7 +29,7 @@ pub trait DataWriter: Send + Sync {
 
     /// Handle query errors.
     async fn on_error(&self, error: QueryError) -> Result<()> {
-        eprintln!("❌ Error in {}: {}", error.table_name, error.error);
+         tracing::error!("❌ Error in {}: {}", error.table_name, error.error);
         Ok(())
     }
 
