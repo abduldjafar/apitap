@@ -114,20 +114,22 @@ from {{ use_source("json_place_holder") }};
 
 ```yaml
 sources:
-  json_place_holder:
-    url: "https://jsonplaceholder.typicode.com/posts"
-    # one of: LimitOffset | PageNumber | PageOnly | Cursor | Default
+  - name: json_place_holder
+    url: https://jsonplaceholder.typicode.com/posts
+    table_destination_name: posts
     pagination:
-      LimitOffset:
-        limit_param: "limit"
-        offset_param: "offset"
-    table_destination_name: public.json_placeholder_posts
+      kind: limit_offset
+      limit_param: _limit
+      offset_param: _start
 
 targets:
-  postgres_sink:
-    kind: postgres
-    # Target connection configured in your codebase (e.g., via env)
-    # The runner calls target.create_conn().await? returning TargetConn::Postgres{..}
+  - name: postgres_sink
+    type: postgres
+    auth:
+      username: postgres
+      password: postgres
+    host: localhost
+    database: postgres
 ```
 
 ### 4) Run
