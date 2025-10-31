@@ -15,7 +15,8 @@ pub enum Error {
     SerdeArrow(String),
     SerdeYaml(String),
     WalkDir(String),
-    Minijinja(String)
+    Minijinja(String),
+    UrlParseError(String)
 }
 
 impl core::fmt::Display for Error {
@@ -40,5 +41,6 @@ crate::impl_from_error!(
     serde_arrow::Error=>SerdeArrow,
     serde_yaml::Error=>SerdeYaml,
     walkdir::Error=>WalkDir,
-    minijinja::Error=>Minijinja
+    minijinja::Error=>Minijinja,
+    url::ParseError=>UrlParseError
 );

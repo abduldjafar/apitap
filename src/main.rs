@@ -1,98 +1,102 @@
-use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use minijinja::{Environment, Error, path_loader};
-use minijinja::value::{Kwargs, Value};
-use apitap::errors::Result;
-use walkdir::WalkDir;
 
-#[derive(Default, Debug)]
-struct TemplateMeta {
-    sink_name: String,
-    source_name: String,
+use apitap::config::load_config_from_path;
+use apitap::errors::{self, Result};
+use apitap::http::Http;
+use apitap::config::templating::{RenderCapture, build_env_with_captures, list_sql_templates, render_one};
+use apitap::pipeline::SinkConn;
+use apitap::pipeline::run::{FetchOpts, run_fetch};
+use apitap::pipeline::sink::{WriterOpts,MakeWriter};
+use apitap::writer::WriteMode;
+use reqwest::Url;
 
-}
 
-fn main() -> Result<()> {
-    let sql_paths = list_sql_templates("pipelines")?;
+const CONCURRENCY: usize = 5;
+const DEFAULT_PAGE_SIZE: usize = 50;
+const FETCH_BATCH_SIZE: usize = 256;
 
-    let mut env = Environment::new();
-    env.set_loader(path_loader("pipelines")); // root is "pipelines/"
+#[tokio::main]
+async fn main() -> Result<()> {
+    let root = "pipelines";
+    let cfg = load_config_from_path("pipelines.yaml")?;
 
-    let meta = Arc::new(Mutex::new(TemplateMeta::default()));
-    let meta_for_fn = Arc::clone(&meta);
+    let names = list_sql_templates(root)?;
+    let capture = Arc::new(Mutex::new(RenderCapture::default()));
+    let env = build_env_with_captures(root, &capture);
 
-    env.add_function("sink", move |kwargs: Kwargs| -> std::result::Result<Value, Error> {
-        let name: String = kwargs.get("name")?;
-        meta_for_fn.lock().unwrap().sink_name = name;
-        Ok(Value::from(""))
-    });
+    let fetch_opts = FetchOpts {
+        concurrency: CONCURRENCY,
+        default_page_size: DEFAULT_PAGE_SIZE,
+        fetch_batch_size: FETCH_BATCH_SIZE,
+    };
 
-    env.add_function("use_source", {
-        let meta_for_fn = Arc::clone(&meta);
-        move |name: String| -> std::result::Result<Value, Error> {
-            meta_for_fn.lock().unwrap().source_name = name.clone();
-            Ok(Value::from(name)) // echo so it still renders in SQL
-        }
-    });
+    for name in names {
+        let rendered = render_one(&env, &capture, &name)?;
 
-    for name in sql_paths {
-        // optional: clear previous capture
-        meta.lock().unwrap().sink_name.clear();
-
-        // 👇 Use the relative template name directly (e.g., "placeholder/post.sql")
-        let tmpl = env.get_template(&name)?;
-        let rendered = tmpl.render(())?;
+        let source_name = &rendered.capture.source;
+        let sink_name   = &rendered.capture.sink;
 
         println!("\n=== {name} ===");
-        println!("Rendered SQL:\n{}", rendered.trim());
-        println!("Captured sink name: {:?}", meta.lock().unwrap().sink_name);
-        println!("Captured source name: {}", meta.lock().unwrap().source_name);
+        println!("source : {source_name}");
+        println!("sink   : {sink_name}");
 
+        let src = cfg.source(source_name).ok_or_else(|| {
+            errors::Error::Reqwest(format!("source not found in config: {source_name}"))
+        })?;
+        let tgt = cfg.target(sink_name).ok_or_else(|| {
+            errors::Error::Reqwest(format!("target not found in config: {sink_name}"))
+        })?;
+
+        // Build HTTP client from source
+        let http   = Http::new(src.url.clone());
+        let client = http.build_client();
+        let url = Url::parse(&http.get_url())?;          // returns Result<Url, url::ParseError>
+
+
+        // Resolve destination table and substitute in SQL
+        let dest_table = src.table_destination_name.as_deref().ok_or_else(|| {
+            errors::Error::Reqwest(format!(
+                "table_destination_name is required for source: {source_name}"
+            ))
+        })?;
+        let sql = rendered.sql.replace(source_name, dest_table);
+
+        // 🔧 Single factory call: TargetConn -> Arc<dyn DataWriter>
+        let writer_opts = WriterOpts {
+            dest_table,
+            primary_key: "id",
+            batch_size: 50,
+            sample_size: 10,
+            auto_create: true,
+            auto_truncate: false,
+            truncate_first: false,
+            write_mode: WriteMode::Merge,
+        };
+
+        // Create a concrete connection first
+        let conn = tgt.create_conn().await?;
+
+        let (writer, maybe_truncate) = conn.make_writer(&writer_opts)?;
+
+        // Optional pre-hook (e.g., truncate)
+        if let Some(hook) = maybe_truncate {
+            hook().await?;
+        }
+
+        // One generic runner drives pagination → page writer → sink
+        run_fetch(
+            client,
+            url,
+            &src.pagination,
+            &sql,
+            dest_table,
+            writer,
+            writer_opts.write_mode,
+            &fetch_opts,
+        ).await?;
+
+        println!("✅ Done: {name}");
     }
 
     Ok(())
-}
-
-fn list_sql_templates(root: impl AsRef<Path>) -> Result<Vec<String>> {
-    let root = root.as_ref();
-    let mut out = Vec::new();
-
-    for entry_res in WalkDir::new(root) {
-        let entry = match entry_res {
-            Ok(e) => e,
-            Err(_) => continue, // skip unreadable entries
-        };
-        if !entry.file_type().is_file() {
-            continue;
-        }
-        let path = entry.path();
-
-        // only .sql (case-insensitive)
-        let is_sql = path
-            .extension()
-            .and_then(|s| s.to_str())
-            .map(|ext| ext.eq_ignore_ascii_case("sql"))
-            .unwrap_or(false);
-        if !is_sql {
-            continue;
-        }
-
-        // make relative to root; if it fails, skip
-        let rel: &Path = match path.strip_prefix(root) {
-            Ok(p) => p,
-            Err(_) => continue,
-        };
-
-        // convert to forward slashes for Minijinja names
-        let name = rel
-            .components()
-            .map(|c| c.as_os_str().to_string_lossy())
-            .collect::<Vec<_>>()
-            .join("/");
-
-        out.push(name);
-    }
-
-    out.sort();
-    Ok(out)
 }
