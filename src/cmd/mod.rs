@@ -16,47 +16,37 @@ const CONCURRENCY: usize = 5;
 const DEFAULT_PAGE_SIZE: usize = 50;
 const FETCH_BATCH_SIZE: usize = 256;
 
-/// Run ETL pipelines from SQL templates
+/// CLI
 #[derive(Parser, Debug)]
-#[command(name = "apitap-run", version)]
+#[command(
+    name = "apitap-run",
+    version,
+    about = "Extract from REST APIs, transform with SQL, load to warehouses.",
+    long_about = "Extract from REST APIs, transform with SQL, load to warehouses.\n\
+HTTP-to-warehouse ETL powered by DataFusion.\n\n\
+Resources:\n  • Modules: Jinja-like SQL templates that declare {{ sink(...) }} and {{ use_source(...) }}\n  • YAML config: defines sources (HTTP + pagination) and targets (warehouses)\n  • Execution: fetch JSON → DataFusion SQL → write via sink-specific writers",
+)]
 pub struct Cli {
-    /// Folder containing SQL templates (Minijinja)
-    #[arg(
-        long = "modules",
-        short = 'm',
-        default_value = "pipelines",
-        value_name = "DIR"
-    )]
+    #[arg(long = "modules", short = 'm', value_name = "DIR", default_value = "pipelines")]
     pub modules: String,
 
-    /// YAML config file
-    #[arg(
-        long = "yaml-config",
-        short = 'y',
-        default_value = "pipelines.yaml",
-        value_name = "FILE"
-    )]
+    #[arg(long = "yaml-config", short = 'y', value_name = "FILE", default_value = "pipelines.yaml")]
     pub yaml_config: String,
 }
 
-/// Run all templates under `root` using configuration from `cfg_path`.
 pub async fn run_pipeline(root: &str, cfg_path: &str) -> Result<()> {
-    // 1) Discover templates + load config
     let names = list_sql_templates(root)?;
     let cfg = load_config_from_path(cfg_path)?;
 
-    // 2) Build templating env that captures sink()/use_source()
     let capture = Arc::new(Mutex::new(RenderCapture::default()));
     let env = build_env_with_captures(root, &capture);
 
-    // 3) Shared fetch options
     let fetch_opts = FetchOpts {
         concurrency: CONCURRENCY,
         default_page_size: DEFAULT_PAGE_SIZE,
         fetch_batch_size: FETCH_BATCH_SIZE,
     };
 
-    // 4) Process each template
     for name in names {
         let rendered = render_one(&env, &capture, &name)?;
         let source_name = &rendered.capture.source;
@@ -66,7 +56,6 @@ pub async fn run_pipeline(root: &str, cfg_path: &str) -> Result<()> {
         println!("source : {source_name}");
         println!("sink   : {sink_name}");
 
-        // Resolve source/target from config
         let src = cfg.source(source_name).ok_or_else(|| {
             errors::Error::Reqwest(format!("source not found in config: {source_name}"))
         })?;
@@ -74,12 +63,10 @@ pub async fn run_pipeline(root: &str, cfg_path: &str) -> Result<()> {
             errors::Error::Reqwest(format!("target not found in config: {sink_name}"))
         })?;
 
-        // HTTP client
         let http = Http::new(src.url.clone());
         let client = http.build_client();
         let url = reqwest::Url::parse(&http.get_url())?;
 
-        // Destination table + inject into SQL
         let dest_table = src.table_destination_name.as_deref().ok_or_else(|| {
             errors::Error::Reqwest(format!(
                 "table_destination_name is required for source: {source_name}"
@@ -87,7 +74,6 @@ pub async fn run_pipeline(root: &str, cfg_path: &str) -> Result<()> {
         })?;
         let sql = rendered.sql.replace(source_name, dest_table);
 
-        // Target writer via factory
         let writer_opts = WriterOpts {
             dest_table,
             primary_key: "id",
@@ -105,7 +91,6 @@ pub async fn run_pipeline(root: &str, cfg_path: &str) -> Result<()> {
             hook().await?;
         }
 
-        // Fetch → write
         run_fetch(
             client,
             url,

@@ -1,6 +1,6 @@
 // src/utils/http_fetcher.rs
 use crate::errors::{Error, Result};
-use crate::utils::datafusion_ext::{DataFrameExt, JsonValueExt, QueryResult, QueryResultStream};
+use crate::utils::datafusion_ext::{DataFrameExt, JsonValueExt, QueryResultStream};
 use crate::writer::{DataWriter, WriteMode};
 use async_trait::async_trait;
 use futures::Stream;

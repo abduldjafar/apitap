@@ -2,7 +2,6 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use crate::errors::Result;
-use crate::pipeline::Config;
 use minijinja::path_loader;
 use minijinja::value::{Kwargs, Value};
 use minijinja::{Environment, Error as MjError};
@@ -16,12 +15,11 @@ pub struct RenderCapture {
 
 #[derive(Debug, Clone)]
 pub struct RenderedSql {
-    pub name: String, // e.g., "placeholder/post.sql"
-    pub sql: String,  // rendered SQL
+    pub name: String, 
+    pub sql: String, 
     pub capture: RenderCapture,
 }
 
-/// Build a Minijinja env rooted at `root` that captures `sink()` and `use_source()`.
 pub fn build_env_with_captures(
     root: &str,
     shared_cap: &Arc<Mutex<RenderCapture>>,
@@ -59,13 +57,11 @@ pub fn build_env_with_captures(
     env
 }
 
-/// Render exactly one template, returning rendered SQL and captured fields.
 pub fn render_one(
     env: &Environment,
     shared_cap: &Arc<Mutex<RenderCapture>>,
     name: &str,
 ) -> Result<RenderedSql> {
-    // clear previous capture
     {
         let mut c = shared_cap.lock().unwrap();
         c.sink.clear();
@@ -83,7 +79,6 @@ pub fn render_one(
     })
 }
 
-/// Recursively list `.sql` files as forward-slash names relative to `root`.
 pub fn list_sql_templates(root: impl AsRef<Path>) -> Result<Vec<String>> {
     let root = root.as_ref();
     let mut out = Vec::new();
