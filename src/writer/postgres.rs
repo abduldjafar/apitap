@@ -9,6 +9,7 @@ use sqlx::{PgPool, types::Json};
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 use tokio_stream::StreamExt;
+use tracing::{debug, info};
 
 //=============== Type Definitions ============================================//
 
@@ -310,9 +311,9 @@ impl PostgresWriter {
         rows: &[Value],
         schema: &BTreeMap<String, PgType>,
     ) -> Result<()> {
-        tracing::info!("Merging Data..");
-
+        // ---- Guards ------------------------------------------------------------
         if rows.is_empty() {
+            info!("merge_batch: no rows to merge; skipping");
             return Ok(());
         }
         if schema.is_empty() {
@@ -324,9 +325,11 @@ impl PostgresWriter {
             .clone()
             .ok_or_else(|| Error::Sqlx("Postgres: primary key not configured".to_string()))?;
 
+        // Column lists (BTreeMap keeps stable order)
         let col_names_raw: Vec<&str> = schema.keys().map(|s| s.as_str()).collect();
         let values_per_row = col_names_raw.len();
 
+        // Quoted names for target table (t."col") and source alias (s."col")
         let cols_t_quoted: Vec<String> =
             col_names_raw.iter().map(|c| Self::quote_ident(c)).collect();
         let cols_s_quoted: Vec<String> = col_names_raw
@@ -334,25 +337,27 @@ impl PostgresWriter {
             .map(|c| format!("s.{}", Self::quote_ident(c)))
             .collect();
 
+        // Helper strings
         let columns_t_str = cols_t_quoted.join(", ");
         let columns_s_str = cols_s_quoted.join(", ");
+        let using_cols_str = cols_t_quoted.join(", "); // names for s(...)
 
+        // VALUES placeholders
         let mut placeholders = Vec::with_capacity(rows.len());
         for row_idx in 0..rows.len() {
-            let row_placeholders: Vec<String> = (1..=values_per_row)
+            let row_ph: Vec<String> = (1..=values_per_row)
                 .map(|col_idx| format!("${}", row_idx * values_per_row + col_idx))
                 .collect();
-            placeholders.push(format!("({})", row_placeholders.join(", ")));
+            placeholders.push(format!("({})", row_ph.join(", ")));
         }
         let values_block = placeholders.join(",\n        ");
 
+        // Target table + PK refs
         let table_sql = Self::quote_ident_path(&self.table_name);
         let pk_t = format!(r#"t.{}"#, Self::quote_ident(&pk_name));
         let pk_s = format!(r#"s.{}"#, Self::quote_ident(&pk_name));
 
-        let using_cols_str = cols_t_quoted.join(", ");
-
-        // build UPDATE SET for all non-PK columns
+        // Determine non-PK columns
         let non_pk_idx: Vec<usize> = col_names_raw
             .iter()
             .enumerate()
@@ -360,8 +365,17 @@ impl PostgresWriter {
             .map(|(i, _)| i)
             .collect();
 
+        // Build the UPDATE clause with correct Postgres forms:
+        //  - 0 cols: no UPDATE
+        //  - 1 col:  UPDATE SET t."c" = s."c"
+        //  - >1:     UPDATE SET (t."c1", t."c2") = ROW(s."c1", s."c2")
         let set_clause = if non_pk_idx.is_empty() {
             None
+        } else if non_pk_idx.len() == 1 {
+            let i = non_pk_idx[0];
+            let tcol = &cols_t_quoted[i];
+            let scol = &cols_s_quoted[i];
+            Some(format!(r#"UPDATE SET {tcol} = {scol}"#))
         } else {
             let left = non_pk_idx
                 .iter()
@@ -375,9 +389,10 @@ impl PostgresWriter {
                 .cloned()
                 .collect::<Vec<_>>()
                 .join(", ");
-            Some(format!(r#"UPDATE SET ({}) = ({})"#, left, right)) // <-- ADD "UPDATE"
+            Some(format!(r#"UPDATE SET ({left}) = ROW({right})"#))
         };
 
+        // Final SQL
         let query = match set_clause {
             Some(set) => format!(
                 r#"
@@ -422,7 +437,20 @@ WHEN NOT MATCHED THEN
             ),
         };
 
-        // bind values in column order
+        // Log concise, useful info (full SQL at debug level)
+        let placeholder_count = rows.len() * values_per_row;
+        info!(
+            table = %table_sql,
+            pk = %pk_name,
+            rows = rows.len(),
+            cols = values_per_row,
+            placeholders = placeholder_count,
+            will_update_cols = non_pk_idx.len(),
+            "MERGE batch"
+        );
+        debug!(%query, "MERGE SQL");
+
+        // Bind values row-wise, column order same as schema
         let mut all_values = Vec::with_capacity(rows.len() * values_per_row);
         for row in rows {
             for col in &col_names_raw {
@@ -440,6 +468,7 @@ WHEN NOT MATCHED THEN
             q = self.bind_value(q, value, expected)?;
         }
 
+        // Execute
         q.execute(&self.pool)
             .await
             .map_err(|e| Error::Datafusion(format!("PostgreSQL MERGE: {}", e)))?;

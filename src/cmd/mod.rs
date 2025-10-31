@@ -27,13 +27,23 @@ const FETCH_BATCH_SIZE: usize = 256;
     about = "Extract from REST APIs, transform with SQL, load to warehouses.",
     long_about = "Extract from REST APIs, transform with SQL, load to warehouses.\n\
 HTTP-to-warehouse ETL powered by DataFusion.\n\n\
-Resources:\n  • Modules: Jinja-like SQL templates that declare {{ sink(...) }} and {{ use_source(...) }}\n  • YAML config: defines sources (HTTP + pagination) and targets (warehouses)\n  • Execution: fetch JSON → DataFusion SQL → write via sink-specific writers",
+Resources:\n  • Modules: Jinja-like SQL templates that declare {{ sink(...) }} and {{ use_source(...) }}\n  • YAML config: defines sources (HTTP + pagination) and targets (warehouses)\n  • Execution: fetch JSON → DataFusion SQL → write via sink-specific writers"
 )]
 pub struct Cli {
-    #[arg(long = "modules", short = 'm', value_name = "DIR", default_value = "pipelines")]
+    #[arg(
+        long = "modules",
+        short = 'm',
+        value_name = "DIR",
+        default_value = "pipelines"
+    )]
     pub modules: String,
 
-    #[arg(long = "yaml-config", short = 'y', value_name = "FILE", default_value = "pipelines.yaml")]
+    #[arg(
+        long = "yaml-config",
+        short = 'y',
+        value_name = "FILE",
+        default_value = "pipelines.yaml"
+    )]
     pub yaml_config: String,
 }
 
@@ -47,7 +57,6 @@ fn pagelabel(p: &Option<Pagination>) -> &'static str {
         None => "none",
     }
 }
-
 
 #[instrument(skip_all, fields(root, cfg_path))]
 pub async fn run_pipeline(root: &str, cfg_path: &str) -> Result<()> {
@@ -92,14 +101,18 @@ pub async fn run_pipeline(root: &str, cfg_path: &str) -> Result<()> {
             Some(s) => s,
             None => {
                 error!(%source_name, "source not found in config");
-                return Err(errors::Error::Reqwest(format!("source not found in config: {source_name}")));
+                return Err(errors::Error::Reqwest(format!(
+                    "source not found in config: {source_name}"
+                )));
             }
         };
         let tgt = match cfg.target(sink_name) {
             Some(t) => t,
             None => {
                 error!(%sink_name, "target not found in config");
-                return Err(errors::Error::Reqwest(format!("target not found in config: {sink_name}")));
+                return Err(errors::Error::Reqwest(format!(
+                    "target not found in config: {sink_name}"
+                )));
             }
         };
 
@@ -152,11 +165,20 @@ pub async fn run_pipeline(root: &str, cfg_path: &str) -> Result<()> {
             &fetch_opts,
         )
         .await?;
-        info!(elapsed_ms = step_t0.elapsed().as_millis() as u64, "module completed");
+        info!(
+            elapsed_ms = step_t0.elapsed().as_millis() as u64,
+            "module completed"
+        );
 
-        info!(elapsed_ms = m_t0.elapsed().as_millis() as u64, "module finished");
+        info!(
+            elapsed_ms = m_t0.elapsed().as_millis() as u64,
+            "module finished"
+        );
     }
 
-    info!(total_ms = t0.elapsed().as_millis() as u64, "all modules finished");
+    info!(
+        total_ms = t0.elapsed().as_millis() as u64,
+        "all modules finished"
+    );
     Ok(())
 }

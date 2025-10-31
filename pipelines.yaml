@@ -6,6 +6,14 @@ sources:
       kind: limit_offset
       limit_param: _limit
       offset_param: _start
+  
+  - name: json_place_holder2
+    url: https://jsonplaceholder.typicode.com/posts
+    table_destination_name: posts_2
+    pagination:
+      kind: limit_offset
+      limit_param: _limit
+      offset_param: _start
 
 targets:
   - name: postgres_sink

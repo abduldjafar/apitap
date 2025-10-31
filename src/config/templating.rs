@@ -15,8 +15,8 @@ pub struct RenderCapture {
 
 #[derive(Debug, Clone)]
 pub struct RenderedSql {
-    pub name: String, 
-    pub sql: String, 
+    pub name: String,
+    pub sql: String,
     pub capture: RenderCapture,
 }
 
