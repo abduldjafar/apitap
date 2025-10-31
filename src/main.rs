@@ -5,5 +5,5 @@ use clap::Parser;
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
-    run_pipeline(&cli.pipelines_root, &cli.config_path).await
+    run_pipeline(&cli.modules, &cli.yaml_config).await
 }

@@ -14,16 +14,17 @@ const CONCURRENCY: usize = 5;
 const DEFAULT_PAGE_SIZE: usize = 50;
 const FETCH_BATCH_SIZE: usize = 256;
 
+/// Run ETL pipelines from SQL templates
 #[derive(Parser, Debug)]
-#[command(name = "apitap-runner", version, about = "Run ETL pipelines from SQL templates")]
+#[command(name = "apitap-run", version)]
 pub struct Cli {
     /// Folder containing SQL templates (Minijinja)
-    #[arg(default_value = "pipelines")]
-    pub pipelines_root: String,
+    #[arg(long = "modules", short = 'm', default_value = "pipelines", value_name = "DIR")]
+    pub modules: String,
 
-    /// Config YAML file path
-    #[arg(default_value = "pipelines.yaml")]
-    pub config_path: String,
+    /// YAML config file
+    #[arg(long = "yaml-config", short = 'y', default_value = "pipelines.yaml", value_name = "FILE")]
+    pub yaml_config: String,
 }
 
 
