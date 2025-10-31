@@ -1,338 +1,295 @@
 # 🚰 Apitap
 
 **Extract from REST APIs, transform with SQL, load to warehouses**
+*HTTP-to-warehouse ETL powered by Apache DataFusion*
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Rust](https://img.shields.io/badge/rust-1.70+-orange.svg)](https://www.rust-lang.org/)
+![Rust](https://img.shields.io/badge/rust-1.70+-orange.svg)
 [![DataFusion](https://img.shields.io/badge/powered%20by-DataFusion-blue)](https://datafusion.apache.org/)
-[![Learning Project](https://img.shields.io/badge/status-learning%20project-green)](https://github.com/yourusername/apitap)
 
-[Quick Start](#-quick-start) • [Features](#-features) • [Examples](#-examples) • [Learning Journey](#-learning-journey) • [Documentation](#-documentation)
-
-</div>
+**Quick links:** [Quick Start](#-quick-start) • [Features](#-features) • [Examples](#-examples) • [Architecture](#-architecture) • [Roadmap](#%EF%B8%8F-roadmap)
 
 ---
 
-> 🌱 **Learning Project Notice**: This is a learning project built to enhance skills in Rust, systems programming, and data engineering. It's actively being developed and may not be production-ready. Feedback, contributions, and learning together are welcome!
+> 🌱 **Learning Project Notice**
+> This is an active learning project exploring Rust, DataFusion, and ETL design. Expect breaking changes and rough edges. Feedback and PRs welcome!
 
 ---
 
 ## 🎯 What is Apitap?
 
-Apitap is a lightweight ETL engine that I'm building to learn Rust, systems programming, and data engineering concepts. The goal is to make it simple to:
+Apitap is a lightweight ETL engine that:
 
-1. **📥 Extract** data from any HTTP/REST API
-2. **🔄 Transform** using familiar SQL (powered by Apache DataFusion)
-3. **📤 Load** into your favorite data warehouse
+1. **Extracts** JSON from HTTP/REST APIs (with pagination)
+2. **Transforms** it using SQL (Apache DataFusion)
+3. **Loads** it into data stores (PostgreSQL today; others to follow)
 
-This project helps me dive deep into:
-- Rust async programming with Tokio
-- Apache Arrow & DataFusion internals
-- Building streaming data pipelines
-- Database connectors and protocols
-- Systems programming concepts
+### Why this approach?
 
-```yaml
-# Example: GitHub stars to PostgreSQL
-source:
-  http:
-    url: https://api.github.com/repos/rust-lang/rust
-    method: GET
+* Author transformations as **SQL modules** (Minijinja templates)
+* Declare inputs/outputs in the SQL via tiny helpers:
 
-transform:
-  sql: |
-    SELECT 
-      name,
-      stargazers_count as stars,
-      CURRENT_TIMESTAMP as synced_at
-    FROM api_response
+  * `{{ sink(name="postgres_sink") }}`
+  * `select * from {{ use_source("json_place_holder") }};`
+* Keep runtime behavior in **YAML config** (URLs, pagination, destinations)
 
-destination:
-  postgres:
-    connection: postgresql://user:pass@localhost/mydb
-    table: github_stars
-```
+---
 
-## ✨ Features (Current & Planned)
+## ✨ Features
 
-- 🚀 **Fast & Lightweight** - Built in Rust, powered by Apache Arrow & DataFusion
-- 🔌 **HTTP First** - Support for REST APIs, webhooks, pagination, auth
-- 🧮 **SQL Transformations** - Use familiar SQL for complex data transformations
-- 🎯 **Multiple Destinations** - PostgreSQL, BigQuery, ClickHouse (in progress)
-- 📊 **Schema Inference** - Automatic schema detection from JSON responses (planned)
-- 🔄 **Incremental Loads** - Support for cursor-based syncs (planned)
-- ⚡ **Streaming** - Process large datasets efficiently (learning)
+**Working now**
 
-## 📚 Learning Journey
+* ✅ Minijinja-based SQL modules with `sink()` and `use_source()`
+* ✅ Loader for module trees (`--modules` folder)
+* ✅ Capture of sink & source names at render time
+* ✅ HTTP client (reqwest) + pagination driver (`LimitOffset`, `PageNumber`, `PageOnly`, `Cursor`)
+* ✅ DataFusion-backed SQL execution
+* ✅ PostgreSQL writer (auto-create, merge/upsert by PK)
+* ✅ Writer factory (add new sinks without changing `main`)
+* ✅ CLI runner (`apitap-run`) with `--modules` and `--yaml-config`
 
-### What I'm Learning
+**In progress / planned**
 
-**Rust & Systems Programming:**
-- ✅ Ownership, borrowing, and lifetimes
-- ✅ Async/await with Tokio runtime
-- 🔄 Error handling patterns (Result, custom errors)
-- 🔄 Generic programming and trait objects
-- 📝 Building CLI tools with clap
-- 📝 Testing strategies in Rust
+* 🔄 ClickHouse writer
+* 🔄 BigQuery writer
+* 🔄 Incremental sync state
+* 🔄 Auth strategies (Bearer/OAuth2), retries/backoff
+* 🔄 Schema inference + evolution
+* 🔄 Observability (metrics/logging), benchmarks
 
-**Data Engineering:**
-- ✅ Apache Arrow memory format
-- 🔄 DataFusion query engine integration
-- 🔄 Streaming data processing
-- 📝 Database connection pooling
-- 📝 Schema evolution and type mapping
-- 📝 Incremental data sync patterns
+Legend: ✅ Working • 🔄 In Progress • 📝 Planned
 
-**Systems Concepts:**
-- ✅ Channel-based communication (mpsc)
-- 🔄 Backpressure handling
-- 📝 Resource pooling
-- 📝 Error recovery and retries
-- 📝 Observability (metrics, logging)
-
-**Legend:** ✅ Implemented • 🔄 In Progress • 📝 Planned
-
-### Progress Tracker
-
-- [ ] Basic HTTP client with reqwest
-- [ ] JSON parsing and flattening
-- [ ] DataFusion TableProvider implementation
-- [ ] PostgreSQL writer with tokio-postgres
-- [ ] Pagination strategies
-- [ ] Authentication handlers (Bearer, OAuth2)
-- [ ] BigQuery integration
-- [ ] ClickHouse integration
-- [ ] State management for incremental syncs
-- [ ] Proper error handling and recovery
-- [ ] Comprehensive test suite
-- [ ] Performance benchmarking
+---
 
 ## 🚀 Quick Start
 
-### Installation
+### 1) Project layout
+
+```
+src/
+  lib.rs
+  config/
+    templating.rs         # build_env_with_captures, list_sql_templates, render_one
+    mod.rs
+  http/
+    fetcher.rs            # PaginatedFetcher + DataFusionPageWriter integration
+  pipeline/
+    sink.rs               # MakeWriter + WriterOpts (factory to DataWriter)
+    run.rs                # run_fetch (pagination -> page writer -> sink)
+    mod.rs
+  writer/
+    postgres.rs           # PostgresWriter implementing DataWriter
+    mod.rs
+  cmd/
+    runner.rs             # run_pipeline(root, cfg_path)
+bin/
+  apitap-run.rs           # small CLI that calls cmd::runner
+```
+
+### 2) Build
 
 ```bash
-# Clone the repo
-git clone https://github.com/yourusername/apitap.git
-cd apitap
-
-# Build
 cargo build --release
-
-# Run an example
-cargo run --release -- run examples/simple.yaml
 ```
 
-### Your First Pipeline
+### 3) Prepare modules & config
 
-1. **Create a config file** (`pipeline.yaml`):
+```
+pipelines/
+  placeholder/
+    post.sql
+pipelines.yaml
+```
+
+**`pipelines/placeholder/post.sql`**
+
+```sql
+{{ sink(name="postgres_sink") }}
+
+select *
+from {{ use_source("json_place_holder") }};
+```
+
+**`pipelines.yaml` (shape example; adapt to your schema)**
 
 ```yaml
-source:
-  http:
-    url: https://jsonplaceholder.typicode.com/users
-    method: GET
+sources:
+  json_place_holder:
+    url: "https://jsonplaceholder.typicode.com/posts"
+    # one of: LimitOffset | PageNumber | PageOnly | Cursor | Default
+    pagination:
+      LimitOffset:
+        limit_param: "limit"
+        offset_param: "offset"
+    table_destination_name: public.json_placeholder_posts
 
-transform:
-  sql: |
-    SELECT 
-      id,
-      name,
-      email,
-      company.name as company_name
-    FROM api_response
-
-destination:
-  postgres:
-    connection: ${DATABASE_URL}
-    table: users
-    mode: replace
+targets:
+  postgres_sink:
+    kind: postgres
+    # Target connection configured in your codebase (e.g., via env)
+    # The runner calls target.create_conn().await? returning TargetConn::Postgres{..}
 ```
 
-2. **Run it:**
+### 4) Run
 
 ```bash
-cargo run --release -- run pipeline.yaml
+# defaults: --modules ./pipelines --yaml-config ./pipelines.yaml
+cargo run --bin apitap-run --release
+
+# or explicit
+cargo run --bin apitap-run --release -- \
+  --modules ./pipelines \
+  --yaml-config ./pipelines.yaml
 ```
 
-## 💡 Examples
+The runner:
 
-### Example 1: GitHub API to PostgreSQL
+* discovers `.sql` under `--modules`
+* renders each with Minijinja (captures `sink` + `source`)
+* resolves the source/target from YAML
+* replaces `{{ use_source("X") }}` with the configured destination table name
+* fetches via HTTP (using the configured pagination)
+* runs the DataFusion SQL
+* writes into the sink (Postgres merge/upsert by `id`)
 
-```yaml
-source:
-  http:
-    url: https://api.github.com/repos/rust-lang/rust
-    method: GET
-    headers:
-      Accept: application/vnd.github.v3+json
+---
 
-transform:
-  sql: |
-    SELECT 
-      name,
-      description,
-      stargazers_count as stars,
-      forks_count as forks,
-      language,
-      updated_at
-    FROM api_response
+## 🧪 Examples
 
-destination:
-  postgres:
-    connection: postgresql://localhost/mydb
-    table: github_repos
-    mode: replace
+### Minimal module
+
+```sql
+{{ sink(name="postgres_sink") }}
+
+select * from {{ use_source("json_place_holder") }};
 ```
 
-### Example 2: REST API with SQL Filtering
+### Multiple helpers (add your own!)
 
-```yaml
-source:
-  http:
-    url: https://jsonplaceholder.typicode.com/posts
-    method: GET
+You can register more Minijinja helpers (e.g., `use_schema("...")`, `mode("append")`) the same way `sink`/`use_source` are wired today.
 
-transform:
-  sql: |
-    SELECT 
-      userId as user_id,
-      id,
-      title,
-      LENGTH(body) as content_length
-    FROM api_response
-    WHERE userId <= 5
-    ORDER BY id DESC
+---
 
-destination:
-  postgres:
-    connection: ${DATABASE_URL}
-    table: posts
-```
-
-## 🎯 Current Capabilities
-
-| Feature | Status | Notes |
-|---------|--------|-------|
-| HTTP GET requests | 📝 | Planned |
-| JSON parsing | 📝 | Planned |
-| SQL transforms | 📝 | Planned |
-| PostgreSQL output | 📝 | Planned |
-| BigQuery output | 📝 | Planned |
-| ClickHouse output | 📝 | Planned |
-| Pagination | 📝 | Planned |
-| Authentication | 📝 | Planned |
-| Incremental sync | 📝 | Planned |
-| Error recovery | 📝 | Planned |
-
-✅ Working • 🔄 In Progress • 📝 Planned
-
-## 🏗️ Architecture (Current)
+## 🏗️ Architecture
 
 ```
-┌─────────────┐      ┌──────────────┐      ┌─────────────┐
-│             │      │              │      │             │
-│  HTTP GET   │─────▶│  DataFusion  │─────▶│  PostgreSQL │
-│  (reqwest)  │      │  SQL Query   │      │  (tokio-pg) │
-│             │      │              │      │             │
-└─────────────┘      └──────────────┘      └─────────────┘
-   Extract              Transform              Load
+              ┌──────────────┐
+              │  CLI (clap)  │  apitap-run --modules DIR --yaml-config FILE
+              └───────┬──────┘
+                      │
+              ┌───────▼────────────────────┐
+              │ cmd::runner::run_pipeline  │
+              └───────┬────────────────────┘
+                      │
+     ┌────────────────┴──────────────┐
+     │ config::templating            │  build_env_with_captures()
+     │  • list_sql_templates         │  register sink()/use_source()
+     │  • render_one                 │  capture sink/source
+     └────────────────┬──────────────┘
+                      │
+               ┌──────▼──────────┐
+               │ YAML config      │  sources: URL + pagination + table_destination_name
+               │ (load_config_…)  │  targets: named sinks (e.g., postgres_sink)
+               └──────┬──────────┘
+                      │
+       ┌──────────────▼──────────────┐
+       │ HTTP + Pagination            │  PaginatedFetcher
+       │  • reqwest client            │  LimitOffset / PageNumber / PageOnly / Cursor
+       └──────────────┬──────────────┘
+                      │
+            ┌─────────▼─────────┐
+            │ DataFusion SQL     │  DataFusionPageWriter executes SQL
+            └─────────┬─────────┘
+                      │
+     ┌────────────────▼────────────────┐
+     │ pipeline::sink::MakeWriter      │  TargetConn -> Arc<dyn DataWriter>
+     │  • PostgresWriter (upsert)      │  (factory; extend for CH/BQ)
+     └─────────────────────────────────┘
 ```
 
-**Tech Stack I'm Learning:**
-- `tokio` - Async runtime
-- `reqwest` - HTTP client
-- `datafusion` - SQL query engine
-- `arrow` - Columnar data format
-- `tokio-postgres` - PostgreSQL async driver
-- `serde_json` - JSON parsing
-- `clap` - CLI argument parsing
+* **Templating:** Minijinja captures `sink`/`source` from the SQL module itself.
+* **Runner:** walks all `.sql`, renders, resolves config, executes.
+* **Fetcher:** generic pagination → stream pages → DataFusion plan → writer.
+* **Writer factory:** add new sinks in one place (no big `match` in main).
 
-## 🤝 Contributing & Learning Together
+---
 
-I'm learning in public! If you're also learning Rust or data engineering, feel free to:
+## ⚙️ CLI
 
-- 🐛 Report bugs or issues you find
-- 💡 Suggest improvements or features
-- 📖 Share learning resources
-- 🔧 Submit PRs (with explanations of what you learned!)
-- 💬 Discuss approaches in GitHub Issues
+```
+apitap-run --modules <DIR> --yaml-config <FILE>
+```
+
+* `--modules, -m` (default: `pipelines`) — Folder of SQL templates
+* `--yaml-config, -y` (default: `pipelines.yaml`) — Pipeline config file
+
+Help text:
+
+> Extract from REST APIs, transform with SQL, load to warehouses.
+> HTTP-to-warehouse ETL powered by DataFusion.
+
+---
+
+## 🛣️ Roadmap
+
+**Core**
+
+* [x] Minijinja modules + capture
+* [x] Pagination driver (LO/PN/PO/Cursor)
+* [x] DataFusion execution
+* [x] Postgres writer (merge by `id`)
+* [x] Writer factory (no main-branching)
+* [x] CLI with `--modules` / `--yaml-config`
+
+**Next**
+
+* [ ] ClickHouse writer
+* [ ] BigQuery writer
+* [ ] Auth, retries/backoff
+* [ ] State for incremental loads
+* [ ] Schema inference / evolution
+* [ ] Logging/metrics + perf tuning
+* [ ] Tests and CI
+
+---
+
+## 📚 Learning Notes
+
+* Rust async with Tokio
+* Traits + trait objects (`Arc<dyn DataWriter>`)
+* DataFusion logical plans
+* Backpressure and pagination
+* Clear module boundaries (`config/`, `pipeline/`, `cmd/`)
+
+---
+
+## 🤝 Contributing
+
+New to Rust/data? Perfect—this is a learning repo.
+PRs, ideas, docs, and questions are welcome.
 
 ```bash
-# Get started
 git clone https://github.com/yourusername/apitap.git
 cd apitap
 cargo build
-
-# Run tests
 cargo test
-
-# Try an example
-cargo run -- run examples/github-stars.yaml
 ```
 
-## 📖 Documentation & Resources
+Run a pipeline:
 
-### Learning Resources I'm Using:
-- [The Rust Book](https://doc.rust-lang.org/book/)
-- [Tokio Tutorial](https://tokio.rs/tokio/tutorial)
-- [DataFusion Documentation](https://datafusion.apache.org/)
-- [Arrow Format Specification](https://arrow.apache.org/docs/format/Columnar.html)
-- [Designing Data-Intensive Applications](https://dataintensive.net/)
+```bash
+cargo run --bin apitap-run -- --modules ./pipelines --yaml-config ./pipelines.yaml
+```
 
-### Project Documentation:
-- [Architecture Notes](docs/architecture.md) - How things work
-- [Development Log](docs/dev-log.md) - My learning notes
-- [API Reference](docs/api.md) - Code documentation
-
-## 🛣️ Learning Roadmap
-
-**Phase 1: Core Pipeline (Current)**
-- [ ] HTTP source basics
-- [ ] DataFusion integration
-- [ ] PostgreSQL writer
-- [ ] Error handling patterns
-- [ ] Comprehensive tests
-
-**Phase 2: Production Features**
-- [ ] Authentication (Bearer, OAuth2)
-- [ ] Pagination strategies
-- [ ] State management
-- [ ] Retry logic with backoff
-- [ ] Connection pooling
-
-**Phase 3: Advanced**
-- [ ] Multiple destinations
-- [ ] Schema evolution
-- [ ] Incremental syncs
-- [ ] Performance optimization
-- [ ] Observability (metrics, traces)
-
-**Phase 4: Stretch Goals**
-- [ ] GraphQL support
-- [ ] dbt integration
-- [ ] Web UI for monitoring
-- [ ] Distributed mode
-
-## 💬 Connect
-
-- 💭 [GitHub Discussions](https://github.com/yourusername/apitap/discussions) - Ask questions, share ideas
-- 🐛 [Issues](https://github.com/yourusername/apitap/issues) - Bug reports, feature requests
-- 📝 [Dev Log](docs/dev-log.md) - Follow my learning journey
+---
 
 ## 📄 License
 
-MIT License - See [LICENSE](LICENSE) for details.
+MIT — see [LICENSE](LICENSE).
+
+---
 
 ## 🙏 Acknowledgments
 
-Huge thanks to the amazing Rust and data engineering communities, and these incredible open-source projects:
-
-- [Apache Arrow](https://arrow.apache.org/) & [DataFusion](https://datafusion.apache.org/) - For making this possible
-- [Tokio](https://tokio.rs/) - Async runtime
-- [The Rust Community](https://www.rust-lang.org/community) - For patience with beginners
-
-Special shoutout to:
-- [datafusion-contrib](https://github.com/datafusion-contrib) repositories for examples
-- Rust async book authors
-- Everyone who answers questions on Discord/Reddit
+* [Apache Arrow](https://arrow.apache.org/) & [DataFusion](https://datafusion.apache.org/)
+* [Tokio](https://tokio.rs/) and the Rust community ❤️
