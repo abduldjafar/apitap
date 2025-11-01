@@ -108,8 +108,8 @@ impl PostgresWriter {
         }
     }
 
-    pub fn with_primary_key_single(mut self, name: impl Into<String>) -> Self {
-        self.primary_key = Some(name.into());
+    pub fn with_primary_key_single(mut self, name: impl Into<Option<String>>) -> Self {
+        self.primary_key = name.into();
         self
     }
 

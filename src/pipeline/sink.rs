@@ -13,7 +13,7 @@ pub type Hook = Box<dyn FnOnce() -> HookFuture + Send>;
 #[derive(Debug, Clone)]
 pub struct WriterOpts<'a> {
     pub dest_table: &'a str,
-    pub primary_key: &'a str,
+    pub primary_key: Option<String>,
     pub batch_size: usize,
     pub sample_size: usize,
     pub auto_create: bool,
@@ -31,9 +31,10 @@ impl MakeWriter for TargetConn {
         match self {
             TargetConn::Postgres { pool, .. } => {
                 // 1) Build concrete writer
+
                 let pg = Arc::new(
                     PostgresWriter::new(pool.clone(), opts.dest_table)
-                        .with_primary_key_single(opts.primary_key)
+                        .with_primary_key_single(opts.primary_key.clone())
                         .with_batch_size(opts.batch_size)
                         .with_sample_size(opts.sample_size)
                         .auto_create(opts.auto_create)
