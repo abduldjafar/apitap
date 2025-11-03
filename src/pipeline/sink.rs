@@ -60,7 +60,9 @@ impl MakeWriter for TargetConn {
                 Ok((writer, hook))
             }
 
-            other_target => Err(ApitapError::UnsupportedSink(format!("{other_target:?}"))),
+            _ => Err(ApitapError::UnsupportedSink(format!(
+                "Unsopported Sink Found"
+            ))),
         }
     }
 }

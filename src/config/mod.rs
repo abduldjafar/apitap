@@ -2,7 +2,6 @@ use std::{fs::File, path::Path};
 
 use tracing_subscriber::EnvFilter;
 
-use crate::errors;
 use crate::errors::Result;
 use crate::pipeline::Config as PipelineConfig;
 

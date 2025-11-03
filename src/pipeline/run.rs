@@ -49,23 +49,23 @@ pub async fn run_fetch(
         }
 
         Some(Pagination::PageNumber {
-            page_param,
-            per_page_param,
+            page_param: _,
+            per_page_param: _,
         }) => {
-            let fetcher = PaginatedFetcher::new(client, url, opts.concurrency)
+            let _fetcher = PaginatedFetcher::new(client, url, opts.concurrency)
                 .with_batch_size(opts.fetch_batch_size);
         }
 
-        Some(Pagination::PageOnly { page_param }) => {
-            let fetcher = PaginatedFetcher::new(client, url, opts.concurrency)
+        Some(Pagination::PageOnly { page_param: _ }) => {
+            let _fetcher = PaginatedFetcher::new(client, url, opts.concurrency)
                 .with_batch_size(opts.fetch_batch_size);
         }
 
         Some(Pagination::Cursor {
-            cursor_param,
-            page_size_param,
+            cursor_param: _,
+            page_size_param: _,
         }) => {
-            let fetcher = PaginatedFetcher::new(client, url, opts.concurrency)
+            let _fetcher = PaginatedFetcher::new(client, url, opts.concurrency)
                 .with_batch_size(opts.fetch_batch_size);
         }
 

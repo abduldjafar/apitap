@@ -1,4 +1,3 @@
-// src/utils/http_fetcher.rs
 use crate::errors::{ApitapError, Result};
 use crate::utils::datafusion_ext::{DataFrameExt, JsonValueExt, QueryResultStream};
 use crate::writer::{DataWriter, WriteMode};
@@ -560,7 +559,7 @@ impl PaginatedFetcher {
         limit_param: &str,
         offset_param: &str,
         writer: Arc<dyn PageWriter>,
-        stats: &mut FetchStats,
+        _stats: &mut FetchStats,
         write_mode: WriteMode,
     ) -> Result<()> {
         // We already wrote offset=0 ⇒ remaining i=1..pages-1 (offset = i*limit)

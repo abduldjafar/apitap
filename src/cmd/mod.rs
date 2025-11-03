@@ -13,7 +13,7 @@ use crate::pipeline::run::{FetchOpts, run_fetch};
 use crate::pipeline::sink::{MakeWriter, WriterOpts};
 use crate::writer::WriteMode;
 use clap::Parser;
-use tracing::{debug, error, info, instrument, warn};
+use tracing::{debug, info, instrument, warn};
 
 const CONCURRENCY: usize = 5;
 const DEFAULT_PAGE_SIZE: usize = 50;

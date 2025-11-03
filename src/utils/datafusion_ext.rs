@@ -17,10 +17,7 @@ use serde_arrow::schema::{SchemaLike, TracingOptions};
 use std::{pin::Pin, sync::Arc};
 use tokio::sync::OnceCell;
 
-use crate::{
-    errors::{ApitapError, Result},
-    writer::{DataWriter, WriteMode},
-};
+use crate::errors::{ApitapError, Result};
 
 // =========================== Shared SessionContext ========================== //
 
