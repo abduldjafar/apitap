@@ -2,20 +2,18 @@
 
 use async_trait::async_trait;
 use datafusion::error::DataFusionError::ArrowError as DatafusionArrowError;
+use datafusion::execution::runtime_env::RuntimeEnvBuilder;
 use datafusion::{
     arrow::{datatypes::FieldRef, error::ArrowError, record_batch::RecordBatch},
     dataframe::DataFrame,
-    execution::{
-        context::SessionConfig,
-        memory_pool::GreedyMemoryPool,
-        runtime_env::{RuntimeConfig, RuntimeEnv},
-    },
+    execution::{context::SessionConfig, memory_pool::GreedyMemoryPool},
     prelude::*,
 };
 use futures::{Stream, StreamExt, stream};
 use serde_arrow::schema::{SchemaLike, TracingOptions};
 use std::{pin::Pin, sync::Arc};
 use tokio::sync::OnceCell;
+use tracing::error;
 
 use crate::errors::{ApitapError, Result};
 
@@ -26,27 +24,31 @@ static SHARED_CTX: OnceCell<Arc<SessionContext>> = OnceCell::const_new();
 /// Stream of JSON rows (`Result<Value>`) boxed + pinned for dynamic dispatch.
 pub type JsonStreamType = Pin<Box<dyn Stream<Item = Result<serde_json::Value>> + Send + 'static>>;
 
-async fn get_shared_context() -> Arc<SessionContext> {
+pub async fn get_shared_context() -> Arc<SessionContext> {
     SHARED_CTX
         .get_or_init(|| async {
-            let memory_pool = GreedyMemoryPool::new(256 * 1024 * 1024);
-            let runtime_env =
-                RuntimeEnv::new(RuntimeConfig::new().with_memory_pool(Arc::new(memory_pool)))
-                    .expect("Failed to create runtime env");
+            const MEM_LIMIT: usize = 256 * 1024 * 1024;
+            let setup_runtime_env = RuntimeEnvBuilder::new()
+                .with_memory_pool(Arc::new(GreedyMemoryPool::new(MEM_LIMIT)))
+                .build();
+
+            let runtime_env = match setup_runtime_env {
+                Ok(rt) => Arc::new(rt),
+                Err(e) => {
+                    error!(error = %e, "failed to build DataFusion RuntimeEnv; falling back to default");
+                    Arc::new(RuntimeEnvBuilder::new().build().unwrap_or_default())
+                }
+            };
 
             let session_config = SessionConfig::new()
                 .with_target_partitions(1)
                 .with_batch_size(2048);
 
-            Arc::new(SessionContext::new_with_config_rt(
-                session_config,
-                Arc::new(runtime_env),
-            ))
+            Arc::new(SessionContext::new_with_config_rt(session_config, runtime_env))
         })
         .await
         .clone()
 }
-
 // ========================= RAII for temp table cleanup ====================== //
 
 pub struct SqlDataFrame {

@@ -1,7 +1,7 @@
 use std::pin::Pin;
 use std::sync::Arc;
 
-use crate::errors::{ApitapError, Result};
+use crate::errors::Result;
 use crate::pipeline::TargetConn;
 use crate::writer::postgres::PostgresWriter;
 use crate::writer::{DataWriter, WriteMode};
@@ -58,10 +58,6 @@ impl MakeWriter for TargetConn {
 
                 Ok((writer, hook))
             }
-
-            _ => Err(ApitapError::UnsupportedSink(format!(
-                "Unsopported Sink Found"
-            ))),
         }
     }
 }
