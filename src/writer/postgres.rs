@@ -1,6 +1,6 @@
 // src/utils/postgres_writer.rs
 
-use crate::errors::{Error, Result};
+use crate::errors::{ApitapError, Result};
 use crate::utils::datafusion_ext::{QueryResult, QueryResultStream};
 use crate::writer::{DataWriter, WriteMode};
 use async_trait::async_trait;
@@ -88,7 +88,7 @@ pub struct PostgresWriter {
     sample_size: usize,
     auto_create: bool,
     pub auto_truncate: bool,
-    table_created: tokio::sync::RwLock<bool>,
+    _table_created: tokio::sync::RwLock<bool>,
     columns_cache: tokio::sync::RwLock<Option<BTreeMap<String, PgType>>>,
     primary_key: Option<String>,
 }
@@ -102,7 +102,7 @@ impl PostgresWriter {
             sample_size: 10,
             auto_create: true,
             auto_truncate: false,
-            table_created: tokio::sync::RwLock::new(false),
+            _table_created: tokio::sync::RwLock::new(false),
             columns_cache: tokio::sync::RwLock::new(None),
             primary_key: None,
         }
@@ -143,8 +143,7 @@ impl PostgresWriter {
         )
         .bind(&self.table_name)
         .fetch_one(&self.pool)
-        .await
-        .map_err(|e| Error::Datafusion(format!("Check table exists: {}", e)))?;
+        .await?;
 
         Ok(result.0)
     }
@@ -157,7 +156,7 @@ impl PostgresWriter {
         for row in sample {
             let obj = row
                 .as_object()
-                .ok_or_else(|| Error::Datafusion("Expected JSON object".to_string()))?;
+                .ok_or_else(|| ApitapError::PipelineError("Expected JSON object".to_string()))?;
 
             for (key, value) in obj {
                 let pg_type = PgType::from_json_value(value);
@@ -193,7 +192,9 @@ impl PostgresWriter {
 
     pub async fn create_table_from_schema(&self, schema: &BTreeMap<String, PgType>) -> Result<()> {
         if schema.is_empty() {
-            return Err(Error::Datafusion("No columns detected".to_string()));
+            return Err(ApitapError::PipelineError(
+                "No columns detected".to_string(),
+            ));
         }
 
         let column_defs: Vec<String> = schema
@@ -228,10 +229,7 @@ impl PostgresWriter {
             table_sql,
             all_parts.join(",\n    ")
         );
-        sqlx::query(&query)
-            .execute(&self.pool)
-            .await
-            .map_err(|e| Error::Datafusion(format!("Create table: {}", e)))?;
+        sqlx::query(&query).execute(&self.pool).await?;
 
         let column_names: Vec<String> = schema.keys().cloned().collect();
         tracing::info!(
@@ -256,7 +254,7 @@ impl PostgresWriter {
         let schema = if !self.table_exists().await? {
             if self.auto_create {
                 if sample_rows.is_empty() {
-                    return Err(Error::Datafusion(
+                    return Err(ApitapError::PipelineError(
                         "Need sample data to create table".to_string(),
                     ));
                 }
@@ -264,14 +262,14 @@ impl PostgresWriter {
                 self.create_table_from_schema(&detected_schema).await?;
                 detected_schema
             } else {
-                return Err(Error::Datafusion(format!(
+                return Err(ApitapError::PipelineError(format!(
                     "Table '{}' does not exist",
                     self.table_name
                 )));
             }
         } else {
             if sample_rows.is_empty() {
-                return Err(Error::Datafusion("Need sample data".to_string()));
+                return Err(ApitapError::PipelineError("Need sample data".to_string()));
             }
             Self::analyze_schema(sample_rows, self.sample_size)?
         };
@@ -301,7 +299,7 @@ impl PostgresWriter {
                         return Ok(());
                     }
                 }
-                Err(Error::Sqlx(format!("TRUNCATE: {}", e)))
+                Err(ApitapError::PipelineError(format!("TRUNCATE: {}", e)))
             }
         }
     }
@@ -317,13 +315,12 @@ impl PostgresWriter {
             return Ok(());
         }
         if schema.is_empty() {
-            return Err(Error::Datafusion("No columns detected".to_string()));
+            return Err(ApitapError::MergeError("No columns detected".to_string()));
         }
 
-        let pk_name = self
-            .primary_key
-            .clone()
-            .ok_or_else(|| Error::Sqlx("Postgres: primary key not configured".to_string()))?;
+        let pk_name = self.primary_key.clone().ok_or_else(|| {
+            ApitapError::MergeError("Postgres: primary key not configured".to_string())
+        })?;
 
         // Column lists (BTreeMap keeps stable order)
         let col_names_raw: Vec<&str> = schema.keys().map(|s| s.as_str()).collect();
@@ -469,9 +466,7 @@ WHEN NOT MATCHED THEN
         }
 
         // Execute
-        q.execute(&self.pool)
-            .await
-            .map_err(|e| Error::Datafusion(format!("PostgreSQL MERGE: {}", e)))?;
+        q.execute(&self.pool).await?;
 
         Ok(())
     }
@@ -532,9 +527,7 @@ WHEN NOT MATCHED THEN
             q = self.bind_value(q, value, expected_type)?;
         }
 
-        q.execute(&self.pool)
-            .await
-            .map_err(|e| Error::Datafusion(format!("PostgreSQL insert: {}", e)))?;
+        q.execute(&self.pool).await?;
 
         Ok(())
     }
@@ -670,7 +663,7 @@ impl DataWriter for PostgresWriter {
         let rows = result
             .data
             .as_array()
-            .ok_or_else(|| Error::Datafusion("Expected JSON array".to_string()))?;
+            .ok_or_else(|| ApitapError::PipelineError("Expected JSON array".to_string()))?;
 
         if rows.is_empty() {
             return Ok(());
@@ -686,26 +679,17 @@ impl DataWriter for PostgresWriter {
     }
 
     async fn begin(&self) -> Result<()> {
-        sqlx::query("BEGIN")
-            .execute(&self.pool)
-            .await
-            .map_err(|e| Error::Datafusion(format!("BEGIN: {}", e)))?;
+        sqlx::query("BEGIN").execute(&self.pool).await?;
         Ok(())
     }
 
     async fn commit(&self) -> Result<()> {
-        sqlx::query("COMMIT")
-            .execute(&self.pool)
-            .await
-            .map_err(|e| Error::Datafusion(format!("COMMIT: {}", e)))?;
+        sqlx::query("COMMIT").execute(&self.pool).await?;
         Ok(())
     }
 
     async fn rollback(&self) -> Result<()> {
-        sqlx::query("ROLLBACK")
-            .execute(&self.pool)
-            .await
-            .map_err(|e| Error::Datafusion(format!("ROLLBACK: {}", e)))?;
+        sqlx::query("ROLLBACK").execute(&self.pool).await?;
         Ok(())
     }
 }

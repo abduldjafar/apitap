@@ -37,6 +37,7 @@ pub enum Target {
     // If/when you add BigQuery, add a variant here and extend `create_conn`.
 }
 
+#[derive(Debug)]
 pub enum TargetConn {
     Postgres { pool: PgPool, database: String },
 }
@@ -166,9 +167,9 @@ impl Config {
 
     /// One-call helper: connect to a target by its unique name.
     pub async fn connect_sink(&self, name: &str) -> CustomResult<TargetConn> {
-        let tgt = self
-            .target(name)
-            .ok_or_else(|| crate::errors::Error::Sqlx(format!("unknown target: {name}")))?;
+        let tgt = self.target(name).ok_or_else(|| {
+            crate::errors::ApitapError::PipelineError("Connection to sink Failed".into())
+        })?;
         tgt.create_conn().await
     }
 }

@@ -1,5 +1,4 @@
-// src/utils/http_fetcher.rs
-use crate::errors::{Error, Result};
+use crate::errors::{ApitapError, Result};
 use crate::utils::datafusion_ext::{DataFrameExt, JsonValueExt, QueryResultStream};
 use crate::writer::{DataWriter, WriteMode};
 use async_trait::async_trait;
@@ -30,10 +29,8 @@ pub async fn ndjson_stream_qs(
         .get(url)
         .query(query)
         .send()
-        .await
-        .map_err(|e| Error::Reqwest(e.to_string()))?
-        .error_for_status()
-        .map_err(|e| Error::Reqwest(e.to_string()))?;
+        .await?
+        .error_for_status()?;
 
     // Heuristic: treat as NDJSON only if content-type says so
     let is_ndjson = resp
@@ -45,12 +42,8 @@ pub async fn ndjson_stream_qs(
 
     if !is_ndjson {
         // -------- Regular JSON (object or array) path --------
-        let bytes = resp
-            .bytes()
-            .await
-            .map_err(|e| Error::Reqwest(e.to_string()))?;
-        let v: Value =
-            serde_json::from_slice(&bytes).map_err(|e| Error::SerdeJson(e.to_string()))?;
+        let bytes = resp.bytes().await.map_err(|e| ApitapError::Reqwest(e))?;
+        let v: Value = serde_json::from_slice(&bytes).map_err(|e| ApitapError::SerdeJson(e))?;
 
         // If data_path is provided, drill into it; else use the whole value.
         let target = if let Some(p) = data_path {
@@ -76,6 +69,7 @@ pub async fn ndjson_stream_qs(
     let byte_stream = resp
         .bytes_stream()
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e));
+
     let reader = StreamReader::new(byte_stream);
     let lines = FramedRead::new(reader, LinesCodec::new());
     let data_path_owned = data_path.map(|s| s.to_owned());
@@ -83,12 +77,12 @@ pub async fn ndjson_stream_qs(
     let s = async_stream::try_stream! {
         let mut lines = lines;
         while let Some(line_res) = lines.next().await {
-            let line = line_res.map_err(|e| Error::Io(e.to_string()))?;
+            let line = line_res.map_err(|e| ApitapError::LinesCodecError(e))?;
             let trimmed = line.trim();
             if trimmed.is_empty() { continue; }
 
             let v: Value = serde_json::from_str(trimmed)
-                .map_err(|e| Error::SerdeJson(e.to_string()))?;
+                .map_err(|e| ApitapError::SerdeJson(e))?;
 
             if let Some(ref p) = data_path_owned {
                 if let Some(inner) = v.pointer(p) {
@@ -242,10 +236,10 @@ impl PaginatedFetcher {
                 limit_param,
                 offset_param,
             } => (limit_param.clone(), offset_param.clone()),
-            _ => {
-                return Err(Error::Reqwest(
-                    "Pagination::LimitOffset not configured".into(),
-                ));
+            other => {
+                return Err(ApitapError::PaginationError(format!(
+                    "Pagination::LimitOffset not configured {other:?}"
+                )));
             }
         };
 
@@ -258,13 +252,10 @@ impl PaginatedFetcher {
             .query(&[(limit_param.as_str(), limit.to_string())])
             .query(&[(offset_param.as_str(), "0")])
             .send()
-            .await
-            .map_err(|e| Error::Reqwest(e.to_string()))?
-            .error_for_status()
-            .map_err(|e| Error::Reqwest(e.to_string()))?
+            .await?
+            .error_for_status()?
             .json()
-            .await
-            .map_err(|e| Error::Reqwest(e.to_string()))?;
+            .await?;
 
         let mut stats = FetchStats::new();
 
@@ -353,10 +344,10 @@ impl PaginatedFetcher {
                 page_param,
                 per_page_param,
             } => (page_param.clone(), per_page_param.clone()),
-            _ => {
-                return Err(Error::Reqwest(
-                    "Pagination::PageNumber not configured".into(),
-                ));
+            other => {
+                return Err(ApitapError::PaginationError(format!(
+                    "expected Pagination::PageNumber, got {other:?}"
+                )));
             }
         };
 
@@ -369,13 +360,10 @@ impl PaginatedFetcher {
             .query(&[(page_param.as_str(), "1".to_string())])
             .query(&[(per_page_param.as_str(), per_page.to_string())])
             .send()
-            .await
-            .map_err(|e| Error::Reqwest(e.to_string()))?
-            .error_for_status()
-            .map_err(|e| Error::Reqwest(e.to_string()))?
+            .await?
+            .error_for_status()?
             .json()
-            .await
-            .map_err(|e| Error::Reqwest(e.to_string()))?;
+            .await?;
 
         let mut stats = FetchStats::new();
 
@@ -571,7 +559,7 @@ impl PaginatedFetcher {
         limit_param: &str,
         offset_param: &str,
         writer: Arc<dyn PageWriter>,
-        stats: &mut FetchStats,
+        _stats: &mut FetchStats,
         write_mode: WriteMode,
     ) -> Result<()> {
         // We already wrote offset=0 ⇒ remaining i=1..pages-1 (offset = i*limit)

@@ -13,7 +13,7 @@ use crate::pipeline::run::{FetchOpts, run_fetch};
 use crate::pipeline::sink::{MakeWriter, WriterOpts};
 use crate::writer::WriteMode;
 use clap::Parser;
-use tracing::{debug, error, info, instrument, warn};
+use tracing::{debug, info, instrument, warn};
 
 const CONCURRENCY: usize = 5;
 const DEFAULT_PAGE_SIZE: usize = 50;
@@ -100,8 +100,7 @@ pub async fn run_pipeline(root: &str, cfg_path: &str) -> Result<()> {
         let src = match cfg.source(source_name) {
             Some(s) => s,
             None => {
-                error!(%source_name, "source not found in config");
-                return Err(errors::Error::Reqwest(format!(
+                return Err(errors::ApitapError::PipelineError(format!(
                     "source not found in config: {source_name}"
                 )));
             }
@@ -109,8 +108,7 @@ pub async fn run_pipeline(root: &str, cfg_path: &str) -> Result<()> {
         let tgt = match cfg.target(sink_name) {
             Some(t) => t,
             None => {
-                error!(%sink_name, "target not found in config");
-                return Err(errors::Error::Reqwest(format!(
+                return Err(errors::ApitapError::PipelineError(format!(
                     "target not found in config: {sink_name}"
                 )));
             }
@@ -126,7 +124,7 @@ pub async fn run_pipeline(root: &str, cfg_path: &str) -> Result<()> {
         // Destination table + inject into SQL
         let dest_table = src.table_destination_name.as_deref().ok_or_else(|| {
             warn!(%source_name, "missing table_destination_name");
-            errors::Error::Reqwest(format!(
+            errors::ApitapError::PipelineError(format!(
                 "table_destination_name is required for source: {source_name}"
             ))
         })?;

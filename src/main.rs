@@ -1,13 +1,12 @@
 use apitap::{
     cmd::{Cli, run_pipeline},
-    config::init_tracing,
-    errors::Result,
+    errors::Result, log,
 };
 use clap::Parser;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    init_tracing();
+    log::init_tracing();
     let cli = Cli::parse();
     run_pipeline(&cli.modules, &cli.yaml_config).await
 }
