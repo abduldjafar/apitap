@@ -11,70 +11,88 @@ Secure sensitive information like API keys and database credentials
 
 **Tasks:**
 - [ ] Add support for environment variables using dotenvy crate
-- [ ] Implement encryption for stored credentials
+- [ ] Implement secure credential storage
 - [ ] Remove any hardcoded secrets from codebase
-- [ ] Create secrets rotation mechanism
-- [ ] Add audit logging for sensitive configuration access
+- [ ] Add validation for configuration files
+- [ ] Support for different environments (dev, staging, prod)
 
 **Config Example:**
 ```yaml
-security:
-  secrets_provider: "env"  # Options: env, vault, aws_secrets
-  encryption:
-    enabled: true
-    key_rotation_days: 90
-  audit:
-    log_access: true
+sources:
+  - name: api_source
+    url: https://api.example.com/data
+    auth:
+      type: basic
+      username: ${API_USER}
+      password: ${API_PASSWORD}
+    table_destination_name: source_data
+
+targets:
+  - name: postgres_sink
+    type: postgres
+    auth:
+      username: ${DB_USER}
+      password: ${DB_PASSWORD}
+    host: ${DB_HOST}
+    database: ${DB_NAME}
 ```
 
 **Detailed Explanation:**
-Secrets management is critical for any production application. Leaked credentials can lead to unauthorized access, data breaches, and service disruptions. By implementing proper secrets management, you'll ensure that sensitive information is protected both at rest and in transit. This includes supporting environment variables for runtime configuration, encrypting stored credentials, and ensuring no secrets are committed to version control.
+Secure configuration management is critical for a production-ready ETL tool. By implementing environment variable support, you can keep sensitive credentials out of your codebase and configuration files. This approach makes the tool both secure and easy to use in different environments, from development to production.
 
 **Acceptance Criteria:**
 - Support for environment variables using the dotenvy crate
-- Encryption for stored credentials with proper key management
-- No hardcoded secrets in code
-- Secrets rotation capability
-- Audit logging for access to sensitive configuration
+- No hardcoded secrets in code or configuration files
+- Validation for configuration files with helpful error messages
+- Support for different environment configurations
+- Simple documentation for configuration setup
 
 ### Issue #2: Enhance Security
 
 **Description:**
-Implement comprehensive security measures for all connections and data handling
+Implement comprehensive security measures for data connections and handling
 
 **Tasks:**
-- [ ] Implement API key rotation with expiration policies
-- [ ] Add TLS for all connections (database and API endpoints)
+- [ ] Add TLS for database connections
+- [ ] Implement secure API authentication for source APIs
 - [ ] Add SQL query sanitization to prevent injection attacks
-- [ ] Implement input validation for all user inputs
-- [ ] Add rate limiting to prevent abuse
-- [ ] Create proper authentication and authorization mechanisms
+- [ ] Implement validation for configuration files
+- [ ] Add secure storage for API credentials
 
 **Config Example:**
 ```yaml
-security:
-  tls:
-    enabled: true
-    cert_path: "/path/to/cert.pem"
-    key_path: "/path/to/key.pem"
-  api_keys:
-    rotation_days: 30
-    expiration_enabled: true
-  rate_limiting:
-    enabled: true
-    requests_per_minute: 60
+sources:
+  - name: secure_api_source
+    url: https://api.example.com/data
+    auth:
+      type: bearer
+      token: ${API_TOKEN}
+    tls:
+      verify: true
+    table_destination_name: secure_data
+
+targets:
+  - name: postgres_sink
+    type: postgres
+    auth:
+      username: ${DB_USER}
+      password: ${DB_PASSWORD}
+    host: localhost
+    database: analytics
+    tls:
+      enabled: true
+      verify_cert: true
 ```
 
 **Detailed Explanation:**
-Security must be built into every layer of the application. This includes securing network communications with TLS, implementing proper authentication and authorization, and preventing common attacks like SQL injection. By addressing these security concerns, you'll protect both your application and your users' data from potential threats.
+Security must be built into every connection your ETL tool makes. This includes securing database connections with TLS, properly authenticating with source APIs, and preventing SQL injection attacks. By addressing these security concerns, you'll protect sensitive data throughout the ETL process while keeping the tool easy to use.
 
 **Acceptance Criteria:**
-- Implement proper API key rotation with expiration policies
-- Add TLS for all connections including database and API endpoints
+- Add TLS support for all database connections
+- Implement secure authentication for source APIs (Bearer, Basic Auth, API Key)
 - Sanitize all SQL queries to prevent injection attacks
-- Implement proper input validation for all user inputs
-- Add rate limiting to prevent abuse
-- Implement proper authentication and authorization mechanisms
+- Add validation for configuration files with helpful error messages
+- Implement secure storage and usage of credentials
 
 ### Issue #3: Implement Graceful Error Recovery
 
@@ -90,16 +108,33 @@ Add robust error handling and recovery mechanisms to maintain stability
 
 **Config Example:**
 ```yaml
-error_handling:
-  circuit_breaker:
-    enabled: true
-    failure_threshold: 5
-    reset_timeout_seconds: 30
-  retry:
-    enabled: true
-    max_attempts: 3
-    initial_backoff_ms: 1000
-    max_backoff_ms: 10000
+sources:
+  - name: api_source
+    url: https://api.example.com/data
+    error_handling:
+      circuit_breaker:
+        enabled: true
+        failure_threshold: 5
+        reset_timeout_seconds: 30
+      retry:
+        enabled: true
+        max_attempts: 3
+        initial_backoff_ms: 1000
+        max_backoff_ms: 10000
+    table_destination_name: resilient_data
+
+targets:
+  - name: postgres_sink
+    type: postgres
+    auth:
+      username: ${DB_USER}
+      password: ${DB_PASSWORD}
+    host: localhost
+    database: analytics
+    error_handling:
+      retry:
+        enabled: true
+        max_attempts: 3
 ```
 
 **Detailed Explanation:**
@@ -126,14 +161,29 @@ Implement thorough data validation throughout the application
 
 **Config Example:**
 ```yaml
-validation:
-  schema_validation: true
-  strict_type_checking: true
-  boundary_checks: true
-  format_validation:
-    email: true
-    url: true
-    date: true
+sources:
+  - name: api_source
+    url: https://api.example.com/data
+    validation:
+      schema_validation: true
+      strict_type_checking: true
+      boundary_checks: true
+      format_validation:
+        email: true
+        url: true
+        date: true
+    table_destination_name: validated_data
+
+targets:
+  - name: postgres_sink
+    type: postgres
+    auth:
+      username: ${DB_USER}
+      password: ${DB_PASSWORD}
+    host: localhost
+    database: analytics
+    validation:
+      strict_type_checking: true
 ```
 
 **Detailed Explanation:**
@@ -202,23 +252,29 @@ Enhance error handling throughout the application
 - [ ] Include recovery suggestions where appropriate
 
 **Config Example:**
-```rust
-use thiserror::Error;
+```yaml
+sources:
+  - name: api_source
+    url: https://api.example.com/data
+    error_handling:
+      error_types:
+        - ConfigError
+        - DatabaseError
+        - HttpError
+        - ValidationError
+    table_destination_name: error_handled_data
 
-#[derive(Error, Debug)]
-pub enum ApiTapError {
-    #[error("Configuration error: {0}")]
-    ConfigError(String),
-    
-    #[error("Database connection failed: {0}")]
-    DatabaseError(#[from] sqlx::Error),
-    
-    #[error("HTTP request failed: {0}")]
-    HttpError(#[from] reqwest::Error),
-    
-    #[error("Validation error: {0}")]
-    ValidationError(String),
-}
+targets:
+  - name: postgres_sink
+    type: postgres
+    auth:
+      username: ${DB_USER}
+      password: ${DB_PASSWORD}
+    host: localhost
+    database: analytics
+    error_handling:
+      include_context: true
+      recovery_suggestions: true
 ```
 
 **Detailed Explanation:**
@@ -244,21 +300,28 @@ Enhance logging to provide structured, searchable logs
 - [ ] Add log sampling for high-volume events
 
 **Config Example:**
-```rust
-// Initialize structured logging
-tracing_subscriber::fmt()
-    .with_env_filter(EnvFilter::from_default_env())
-    .json()
-    .with_span_events(FmtSpan::CLOSE)
-    .init();
+```yaml
+sources:
+  - name: api_source
+    url: https://api.example.com/data
+    logging:
+      level: info
+      format: json
+      include_context: true
+      request_id: true
+    table_destination_name: logged_data
 
-// Example log with context
-tracing::info!(
-    request_id = %request_id,
-    user_id = %user_id,
-    operation = "data_fetch",
-    "Successfully fetched data from API"
-);
+targets:
+  - name: postgres_sink
+    type: postgres
+    auth:
+      username: ${DB_USER}
+      password: ${DB_PASSWORD}
+    host: localhost
+    database: analytics
+    logging:
+      level: info
+      format: json
 ```
 
 **Detailed Explanation:**
@@ -285,16 +348,27 @@ Optimize resource usage for concurrent operations
 
 **Config Example:**
 ```yaml
-concurrency:
-  max_concurrent_requests: 50
-  connection_pool:
-    max_size: 20
-    timeout_seconds: 30
-  backpressure:
-    enabled: true
-    threshold: 80  # percentage
-  task_allocation:
-    worker_threads: 8
+sources:
+  - name: api_source
+    url: https://api.example.com/data
+    concurrency:
+      max_concurrent_requests: 50
+      backpressure:
+        enabled: true
+        threshold: 80  # percentage
+    table_destination_name: concurrent_data
+
+targets:
+  - name: postgres_sink
+    type: postgres
+    auth:
+      username: ${DB_USER}
+      password: ${DB_PASSWORD}
+    host: localhost
+    database: analytics
+    connection_pool:
+      max_size: 20
+      timeout_seconds: 30
 ```
 
 **Detailed Explanation:**
@@ -322,26 +396,27 @@ Develop integration tests that verify end-to-end functionality
 
 **Config Example:**
 ```yaml
-# .github/workflows/integration-tests.yml
-name: Integration Tests
-on: [push, pull_request]
-jobs:
-  integration-test:
-    runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:14
-        env:
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_USER: postgres
-        ports:
-          - 5432:5432
-    steps:
-      - uses: actions/checkout@v3
-      - uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-      - run: cargo test --test '*_integration' -- --ignored
+sources:
+  - name: api_source
+    url: https://api.example.com/data
+    table_destination_name: test_data
+    test:
+      mock_responses:
+        - status: 200
+          body: '{"data": [{"id": 1, "name": "Test"}]}'
+        - status: 429
+          body: '{"error": "Rate limited"}'
+
+targets:
+  - name: postgres_sink
+    type: postgres
+    auth:
+      username: ${DB_USER}
+      password: ${DB_PASSWORD}
+    host: localhost
+    database: test_db
+    test:
+      enabled: true
 ```
 
 **Detailed Explanation:**
@@ -367,20 +442,25 @@ Containerize the application for consistent deployment
 - [ ] Document container configuration options
 
 **Config Example:**
-```dockerfile
-# Multi-stage build
-FROM rust:1.70 as builder
-WORKDIR /app
-COPY . .
-RUN cargo build --release
+```yaml
+sources:
+  - name: api_source
+    url: https://api.example.com/data
+    table_destination_name: containerized_data
 
-FROM debian:bullseye-slim
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
-COPY --from=builder /app/target/release/apitap /usr/local/bin/
-RUN useradd -m apitap
-USER apitap
-HEALTHCHECK --interval=30s --timeout=3s CMD apitap health
-ENTRYPOINT ["apitap"]
+targets:
+  - name: postgres_sink
+    type: postgres
+    auth:
+      username: ${DB_USER}
+      password: ${DB_PASSWORD}
+    host: db
+    database: analytics
+    docker:
+      enabled: true
+      health_check: true
+      non_root_user: true
+```
 ```
 
 **Detailed Explanation:**
@@ -498,47 +578,39 @@ A comprehensive user guide makes it easier for users to get started with your ap
 - Create pipeline creation tutorial with step-by-step instructions
 - Document all configuration options and their effects
 
-### Issue #13: Add Input Validation
+### Issue #13: Add Data Validation
 
 **Description:**
-Implement thorough input validation to prevent injection attacks
+Implement thorough data validation throughout the ETL pipeline
 
 **Tasks:**
-- [ ] Add validation for all user inputs
-- [ ] Implement SQL query sanitization
-- [ ] Create graceful handling for malformed inputs
-- [ ] Add content type validation for API endpoints
-- [ ] Implement length limits for string inputs
+- [ ] Add schema validation for incoming API data
+- [ ] Implement data type checking with proper error handling
+- [ ] Add validation for configuration files
+- [ ] Implement boundary checking for numeric values
+- [ ] Add format validation for strings (emails, URLs, etc.)
 
 **Config Example:**
-```rust
-// Using validator crate for input validation
-#[derive(Deserialize, Validate)]
-struct ApiInput {
-    #[validate(length(min = 1, max = 100))]
-    name: String,
-    
-    #[validate(email)]
-    email: String,
-    
-    #[validate(range(min = 1, max = 1000))]
-    limit: u32,
-}
-
-// Sanitizing SQL with parameterized queries
-let query = "SELECT * FROM users WHERE id = $1";
-client.query(query, &[&user_id]).await?;
+```yaml
+validation:
+  schema_validation: true
+  strict_type_checking: true
+  boundary_checks: true
+  format_validation:
+    email: true
+    url: true
+    date: true
 ```
 
 **Detailed Explanation:**
-Input validation is a critical security measure that helps prevent injection attacks and ensures data integrity. By validating all inputs at the application boundary, you can catch malicious or malformed inputs before they cause harm. This includes sanitizing SQL queries to prevent SQL injection, validating API inputs to prevent command injection, and handling malformed inputs gracefully.
+Data validation is essential for maintaining data integrity and preventing errors during processing. By validating data at entry points and before critical operations, you can catch issues early and provide clear feedback. This reduces the risk of processing invalid data and improves the overall reliability of the system.
 
 **Acceptance Criteria:**
-- Validate all user inputs against expected formats and ranges
-- Sanitize SQL queries using parameterized queries or an ORM
-- Handle malformed inputs gracefully with helpful error messages
-- Implement content type validation for API endpoints
-- Add length limits for string inputs
+- Add schema validation for incoming API data using serde validation or a schema validation library
+- Implement data type checking and conversion with proper error handling
+- Add validation for configuration files with helpful error messages
+- Implement boundary checking for numeric values
+- Add format validation for strings like emails, URLs, etc.
 
 ### Issue #14: Optimize Memory Usage
 
@@ -823,54 +895,55 @@ Metrics collection provides visibility into application performance and resource
 - Add custom metrics for business-specific KPIs
 - Implement histogram metrics for latency distribution
 
-### Issue #21: Create Health Check Endpoints
+### Issue #21: Implement Pipeline Monitoring
 
 **Description:**
-Add health check endpoints to monitor service status and dependencies
+Add monitoring capabilities to track ETL pipeline health and performance
 
 **Tasks:**
-- [ ] Implement readiness probe for Kubernetes
-- [ ] Add liveness probe for container orchestration
-- [ ] Check dependencies health (databases, APIs)
-- [ ] Include detailed health status information
-- [ ] Add configurable thresholds for health determination
+- [ ] Implement pipeline execution status tracking
+- [ ] Add performance metrics for each pipeline stage
+- [ ] Create data quality monitoring
+- [ ] Add alerting for failed pipelines
+- [ ] Implement logging for debugging
 
 **Config Example:**
 ```yaml
-health_checks:
-  enabled: true
-  endpoints:
-    readiness:
-      path: "/health/ready"
-      timeout_ms: 500
-    liveness:
-      path: "/health/live"
-      timeout_ms: 1000
-  dependencies:
-    - name: "database"
-      type: "postgres"
-      check_interval_seconds: 30
-      timeout_ms: 1000
-    - name: "external_api"
-      type: "http"
-      url: "https://api.example.com/health"
-      check_interval_seconds: 60
+sources:
+  - name: api_source
+    url: https://api.example.com/data
+    monitoring:
+      log_level: info
+      track_performance: true
+      data_quality_checks: true
+    table_destination_name: monitored_data
+
+targets:
+  - name: postgres_sink
+    type: postgres
+    auth:
+      username: ${DB_USER}
+      password: ${DB_PASSWORD}
+    host: localhost
+    database: analytics
+    monitoring:
+      log_failures: true
 ```
 
 **Detailed Explanation:**
-Health check endpoints provide a way for monitoring systems and orchestrators to determine if your application is functioning correctly. Readiness probes indicate when the application is ready to accept traffic, while liveness probes indicate if it's still running. Dependency health checks ensure that required services are available and functioning.
+Monitoring is essential for maintaining reliable ETL pipelines. By tracking pipeline execution status, performance metrics, and data quality, you can quickly identify and resolve issues. This makes your tool more production-ready while keeping it easy to use.
 
 **Acceptance Criteria:**
-- Implement readiness probe that checks if the application is ready to serve requests
-- Add liveness probe that verifies the application is still running
-- Check dependencies health (databases, APIs, etc.)
-- Include detailed health status information
-- Add configurable thresholds for health determination
+- Track pipeline execution status (success, failure, in-progress)
+- Measure performance metrics for extraction, transformation, and loading
+- Implement data quality checks (missing values, type mismatches)
+- Add alerting for failed pipelines
+- Provide detailed logs for debugging
 
 ### Issue #22: Handle Transient Failures in HTTP Requests
 
 **Description:**
-Handle transient failures in HTTP requests
+Handle transient failures in HTTP requests to source APIs
 
 **Tasks:**
 - [ ] Add request-retry or backoff crate
@@ -883,21 +956,32 @@ Handle transient failures in HTTP requests
 ```yaml
 sources:
   - name: api_source
+    url: https://api.example.com/data
     retry:
       max_attempts: 3
       initial_delay_ms: 1000
       max_delay_ms: 30000
+    table_destination_name: resilient_data
+
+targets:
+  - name: postgres_sink
+    type: postgres
+    auth:
+      username: ${DB_USER}
+      password: ${DB_PASSWORD}
+    host: localhost
+    database: analytics
 ```
 
 **Detailed Explanation:**
-Retry mechanisms improve resilience by automatically retrying operations that fail due to transient issues. Exponential backoff reduces load on struggling services by increasing the delay between retries. Circuit breakers prevent cascading failures by failing fast when a dependency is consistently unavailable.
+API endpoints can experience temporary failures due to network issues, rate limiting, or service outages. By implementing retry logic with exponential backoff, your ETL tool can gracefully handle these transient failures without manual intervention, making it more reliable in production environments.
 
 **Acceptance Criteria:**
-- Implement configurable retry policies with max attempts and conditions
-- Add exponential backoff to reduce load on struggling services
-- Implement circuit breaker pattern to prevent cascading failures
-- Add jitter to retries to prevent thundering herd problems
-- Log retry attempts and outcomes for monitoring
+- Implement retry mechanism with exponential backoff
+- Add configurable max retries and delay parameters
+- Track and log retry attempts
+- Handle permanent failures gracefully after max retries
+- Test with simulated API failures
 
 ### Issue #23: Improve Configuration Management
 
