@@ -2,7 +2,7 @@ use std::pin::Pin;
 // src/pipeline/sink.rs (new file or tuck into templating.rs’ neighbor)
 use std::sync::Arc;
 
-use crate::errors::{Error, Result};
+use crate::errors::{ApitapError, Result};
 use crate::pipeline::TargetConn;
 use crate::writer::postgres::PostgresWriter;
 use crate::writer::{DataWriter, WriteMode};
@@ -60,7 +60,7 @@ impl MakeWriter for TargetConn {
                 Ok((writer, hook))
             }
 
-            _ => Err(Error::Reqwest("unsupported sink".into())),
+            _ => Err(ApitapError::PipelineError("unsupported sink".into())),
         }
     }
 }

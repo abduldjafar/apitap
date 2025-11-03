@@ -4,7 +4,7 @@ use std::sync::Arc;
 use url::Url;
 
 use crate::{
-    errors::{Error, Result},
+    errors::{ApitapError, Result},
     http::fetcher::{DataFusionPageWriter, PaginatedFetcher, Pagination},
     writer::{DataWriter, WriteMode},
 };
@@ -70,7 +70,9 @@ pub async fn run_fetch(
         }
 
         Some(Pagination::Default) | None => {
-            return Err(Error::Reqwest("no supported pagination configured".into()));
+            return Err(ApitapError::PipelineError(
+                "no supported pagination configured".into(),
+            ));
         }
     }
 

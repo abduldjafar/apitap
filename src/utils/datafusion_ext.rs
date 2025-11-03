@@ -7,7 +7,7 @@ use std::{pin::Pin, sync::Arc};
 use tokio::sync::OnceCell;
 
 use datafusion::{
-    arrow::{datatypes::FieldRef, record_batch::RecordBatch},
+    arrow::{datatypes::FieldRef, error::ArrowError, record_batch::RecordBatch},
     dataframe::DataFrame,
     execution::{
         context::SessionConfig,
@@ -18,7 +18,7 @@ use datafusion::{
 };
 
 use crate::{
-    errors::{Error, Result},
+    errors::{ApitapError, Result},
     writer::{DataWriter, WriteMode},
 };
 
@@ -85,10 +85,20 @@ impl JsonValueExt for serde_json::Value {
         let ctx = get_shared_context().await;
 
         let Self::Array(json_array) = self else {
-            return Err(Error::Datafusion("Expected JSON array".into()));
+            return Err(ApitapError::Datafusion(
+                datafusion::error::DataFusionError::ArrowError(
+                    ArrowError::JsonError("Expected JSON array".to_string()),
+                    None,
+                ),
+            ));
         };
         if json_array.is_empty() {
-            return Err(Error::Datafusion("Empty JSON array".into()));
+            return Err(ApitapError::Datafusion(
+                datafusion::error::DataFusionError::ArrowError(
+                    ArrowError::JsonError("Empty JSON array".to_string()),
+                    None,
+                ),
+            ));
         }
 
         let fields: Vec<FieldRef> = Vec::<FieldRef>::from_samples(
@@ -97,23 +107,34 @@ impl JsonValueExt for serde_json::Value {
                 .allow_null_fields(true)
                 .coerce_numbers(true),
         )
-        .map_err(|e| Error::Datafusion(format!("from_samples: {e}")))?;
+        .map_err(|e| ApitapError::SerdeArrow(e))?;
 
         let batch: RecordBatch = serde_arrow::to_record_batch(&fields, json_array)
-            .map_err(|e| Error::Datafusion(format!("to_record_batch: {e}")))?;
+            .map_err(|e| ApitapError::SerdeArrow(e))?;
 
         ctx.read_batch(batch)
-            .map_err(|e| Error::Datafusion(format!("read_batch: {e}")))
+            .map_err(|e|ApitapError::Datafusion(e))
     }
 
     async fn to_sql(&self, table_name: &str, sql: &str) -> Result<SqlDataFrame> {
         let ctx = get_shared_context().await;
 
         let Self::Array(json_array) = self else {
-            return Err(Error::Datafusion("Expected JSON array".into()));
+            return Err(ApitapError::Datafusion(
+                datafusion::error::DataFusionError::ArrowError(
+                    ArrowError::JsonError("Expected JSON array".to_string()),
+                    None,
+                ),
+            ));
+            
         };
         if json_array.is_empty() {
-            return Err(Error::Datafusion("Empty JSON array".into()));
+            return Err(ApitapError::Datafusion(
+                datafusion::error::DataFusionError::ArrowError(
+                    ArrowError::JsonError("Empty JSON array".to_string()),
+                    None,
+                ),
+            ));
         }
 
         let fields: Vec<FieldRef> = Vec::<FieldRef>::from_samples(
@@ -122,21 +143,21 @@ impl JsonValueExt for serde_json::Value {
                 .allow_null_fields(true)
                 .coerce_numbers(true),
         )
-        .map_err(|e| Error::Datafusion(format!("from_samples: {e}")))?;
+        .map_err(|e| ApitapError::SerdeArrow(e))?;
 
         let batch: RecordBatch = serde_arrow::to_record_batch(&fields, json_array)
-            .map_err(|e| Error::Datafusion(format!("to_record_batch: {e}")))?;
+            .map_err(|e|ApitapError::SerdeArrow(e))?;
 
         // Best-effort cleanup of any existing table with the same name.
         let _ = ctx.deregister_table(table_name);
 
         ctx.register_batch(table_name, batch)
-            .map_err(|e| Error::Datafusion(format!("register_batch '{table_name}': {e}")))?;
+            .map_err(|e| ApitapError::Datafusion(e))?;
 
         let df = ctx
             .sql(sql)
             .await
-            .map_err(|e| Error::Datafusion(format!("sql planning: {e}")))?;
+            .map_err(|e| ApitapError::Datafusion(e))?;
 
         Ok(SqlDataFrame {
             df,
@@ -173,15 +194,15 @@ impl DataFrameExt for DataFrame {
             .clone()
             .execute_stream()
             .await
-            .map_err(|e| Error::Datafusion(format!("execute_stream: {e}")))?;
+            .map_err(|e| ApitapError::Datafusion(e))?;
 
         let mut out = Vec::<T>::new();
         while let Some(item) = rb_stream.next().await {
-            let batch = item.map_err(|e| Error::Datafusion(format!("stream batch: {e}")))?;
+            let batch = item.map_err(|e| ApitapError::Datafusion(e))?;
             let vals: Vec<serde_json::Value> = serde_arrow::from_record_batch(&batch)
-                .map_err(|e| Error::Datafusion(format!("from_record_batch: {e}")))?;
+                .map_err(|e| ApitapError::SerdeArrow(e))?;
             let chunk: Vec<T> = serde_json::from_value(serde_json::Value::Array(vals))
-                .map_err(|e| Error::Datafusion(format!("json→Vec<T>: {e}")))?;
+                .map_err(|e| ApitapError::SerdeJson(e))?;
             out.extend(chunk);
         }
         Ok(out)
@@ -194,15 +215,15 @@ impl DataFrameExt for DataFrame {
             .clone()
             .execute_stream()
             .await
-            .map_err(|e| Error::Datafusion(format!("execute_stream: {e}")))?;
+            .map_err(|e| ApitapError::Datafusion(e))?;
 
         let s = async_stream::try_stream! {
             while let Some(item) = rb_stream.next().await {
-                let batch = item.map_err(|e| Error::Datafusion(format!("stream batch: {e}")))?;
+                let batch = item.map_err(|e| ApitapError::Datafusion(e))?;
 
                 let rows: Vec<serde_json::Value> =
                     serde_arrow::from_record_batch(&batch)
-                        .map_err(|e| Error::Datafusion(format!("from_record_batch: {e}")))?;
+                        .map_err(|e| ApitapError::SerdeArrow(e))?;
 
                 for v in rows {
                     yield v;
@@ -220,13 +241,13 @@ impl DataFrameExt for DataFrame {
             .clone()
             .execute_stream()
             .await
-            .map_err(|e| Error::Datafusion(format!("execute_stream: {e}")))?;
+            .map_err(|e| ApitapError::Datafusion(e))?;
 
         let mut rows = Vec::<serde_json::Value>::new();
         while let Some(item) = rb_stream.next().await {
-            let batch = item.map_err(|e| Error::Datafusion(format!("stream batch: {e}")))?;
+            let batch = item.map_err(|e|ApitapError::Datafusion(e))?;
             let mut vals: Vec<serde_json::Value> = serde_arrow::from_record_batch(&batch)
-                .map_err(|e| Error::Datafusion(format!("from_record_batch: {e}")))?;
+                .map_err(|e|ApitapError::SerdeArrow(e))?;
             rows.append(&mut vals);
         }
 

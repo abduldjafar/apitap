@@ -9,8 +9,8 @@ use crate::pipeline::Config as PipelineConfig;
 pub mod templating;
 
 pub fn load_config_from_path<P: AsRef<Path>>(path: P) -> Result<PipelineConfig> {
-    let f = File::open(path).map_err(|e| errors::Error::SerdeYaml(e.to_string()))?;
-    serde_yaml::from_reader(f).map_err(|e| errors::Error::SerdeYaml(e.to_string()))
+    let f = File::open(path).map_err(|e| errors::ApitapError::Io(e))?;
+    serde_yaml::from_reader(f).map_err(|e| errors::ApitapError::SerdeYaml(e))
 }
 
 pub fn init_tracing() {
