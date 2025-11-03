@@ -1,6 +1,3 @@
-use std::sync::PoisonError as StdPoisonError;
-
-// src/error.rs
 use thiserror::Error;
 use tokio_util::codec::LinesCodecError;
 use tracing_subscriber::filter::FromEnvError;
@@ -85,11 +82,7 @@ pub enum ApitapError {
 /// Convenience Result type that uses ApitapError
 pub type Result<T> = std::result::Result<T, ApitapError>;
 
-impl<T> From<StdPoisonError<T>> for ApitapError {
-    fn from(err: StdPoisonError<T>) -> Self {
-        ApitapError::PoisonError(err.to_string())
-    }
-}
+
 
 #[cfg(test)]
 mod tests {
