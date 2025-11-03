@@ -72,7 +72,7 @@ pub async fn run_fetch(
         Some(Pagination::Default) | None => {
             return Err(ApitapError::PaginationError(
                 "no supported pagination configured".into(),
-            ))
+            ));
         }
     }
 

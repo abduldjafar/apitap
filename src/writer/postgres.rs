@@ -229,9 +229,7 @@ impl PostgresWriter {
             table_sql,
             all_parts.join(",\n    ")
         );
-        sqlx::query(&query)
-            .execute(&self.pool)
-            .await?;
+        sqlx::query(&query).execute(&self.pool).await?;
 
         let column_names: Vec<String> = schema.keys().cloned().collect();
         tracing::info!(
@@ -317,9 +315,7 @@ impl PostgresWriter {
             return Ok(());
         }
         if schema.is_empty() {
-            return Err(ApitapError::MergeError(
-                "No columns detected".to_string(),
-            ));
+            return Err(ApitapError::MergeError("No columns detected".to_string()));
         }
 
         let pk_name = self.primary_key.clone().ok_or_else(|| {
@@ -470,8 +466,7 @@ WHEN NOT MATCHED THEN
         }
 
         // Execute
-        q.execute(&self.pool)
-            .await?;
+        q.execute(&self.pool).await?;
 
         Ok(())
     }
@@ -532,8 +527,7 @@ WHEN NOT MATCHED THEN
             q = self.bind_value(q, value, expected_type)?;
         }
 
-        q.execute(&self.pool)
-            .await?;
+        q.execute(&self.pool).await?;
 
         Ok(())
     }
@@ -685,23 +679,17 @@ impl DataWriter for PostgresWriter {
     }
 
     async fn begin(&self) -> Result<()> {
-        sqlx::query("BEGIN")
-            .execute(&self.pool)
-            .await?;
+        sqlx::query("BEGIN").execute(&self.pool).await?;
         Ok(())
     }
 
     async fn commit(&self) -> Result<()> {
-        sqlx::query("COMMIT")
-            .execute(&self.pool)
-            .await?;
+        sqlx::query("COMMIT").execute(&self.pool).await?;
         Ok(())
     }
 
     async fn rollback(&self) -> Result<()> {
-        sqlx::query("ROLLBACK")
-            .execute(&self.pool)
-            .await?;
+        sqlx::query("ROLLBACK").execute(&self.pool).await?;
         Ok(())
     }
 }
