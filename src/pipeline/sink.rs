@@ -1,5 +1,4 @@
 use std::pin::Pin;
-// src/pipeline/sink.rs (new file or tuck into templating.rs’ neighbor)
 use std::sync::Arc;
 
 use crate::errors::{ApitapError, Result};

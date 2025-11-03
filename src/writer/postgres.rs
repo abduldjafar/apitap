@@ -88,7 +88,7 @@ pub struct PostgresWriter {
     sample_size: usize,
     auto_create: bool,
     pub auto_truncate: bool,
-    table_created: tokio::sync::RwLock<bool>,
+    _table_created: tokio::sync::RwLock<bool>,
     columns_cache: tokio::sync::RwLock<Option<BTreeMap<String, PgType>>>,
     primary_key: Option<String>,
 }
@@ -102,7 +102,7 @@ impl PostgresWriter {
             sample_size: 10,
             auto_create: true,
             auto_truncate: false,
-            table_created: tokio::sync::RwLock::new(false),
+            _table_created: tokio::sync::RwLock::new(false),
             columns_cache: tokio::sync::RwLock::new(None),
             primary_key: None,
         }
