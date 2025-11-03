@@ -1,6 +1,7 @@
 // src/error.rs
 use thiserror::Error;
 use tokio_util::codec::LinesCodecError;
+use tracing_subscriber::filter::FromEnvError;
 
 /// Main error type for apitap operations
 #[derive(Error, Debug)]
@@ -71,6 +72,9 @@ pub enum ApitapError {
 
     #[error("Merge Error: {0}")]
     MergeError(String),
+
+    #[error("Tracing From Env Error: {0}")]
+    FromEnvError(#[from] FromEnvError),
 }
 
 /// Convenience Result type that uses ApitapError

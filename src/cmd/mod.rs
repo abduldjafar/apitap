@@ -100,14 +100,14 @@ pub async fn run_pipeline(root: &str, cfg_path: &str) -> Result<()> {
         let src = match cfg.source(source_name) {
             Some(s) => s,
             None => {
-                error!(%source_name, "source not found in config");
-                return Err(errors::ApitapError::PipelineError("".to_string()));
+                return Err(errors::ApitapError::PipelineError(format!(
+                    "source not found in config: {source_name}"
+                )));
             }
         };
         let tgt = match cfg.target(sink_name) {
             Some(t) => t,
             None => {
-                error!(%sink_name, "target not found in config");
                 return Err(errors::ApitapError::PipelineError(format!(
                     "target not found in config: {sink_name}"
                 )));
