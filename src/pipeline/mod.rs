@@ -37,6 +37,7 @@ pub enum Target {
     // If/when you add BigQuery, add a variant here and extend `create_conn`.
 }
 
+#[derive(Debug)]
 pub enum TargetConn {
     Postgres { pool: PgPool, database: String },
 }

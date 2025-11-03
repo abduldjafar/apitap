@@ -65,6 +65,12 @@ pub enum ApitapError {
 
     #[error("Writer error: {0}")]
     PipelineError(String),
+
+    #[error("Unsupported sink: {0}")]
+    UnsupportedSink(String),
+
+    #[error("Merge Error: {0}")]
+    MergeError(String),
 }
 
 /// Convenience Result type that uses ApitapError

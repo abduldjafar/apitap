@@ -143,8 +143,7 @@ impl PostgresWriter {
         )
         .bind(&self.table_name)
         .fetch_one(&self.pool)
-        .await
-        .map_err(|e| ApitapError::PipelineError(format!("Check table exists: {}", e)))?;
+        .await?;
 
         Ok(result.0)
     }
@@ -193,7 +192,9 @@ impl PostgresWriter {
 
     pub async fn create_table_from_schema(&self, schema: &BTreeMap<String, PgType>) -> Result<()> {
         if schema.is_empty() {
-            return Err(ApitapError::PipelineError("No columns detected".to_string()));
+            return Err(ApitapError::PipelineError(
+                "No columns detected".to_string(),
+            ));
         }
 
         let column_defs: Vec<String> = schema
@@ -230,8 +231,7 @@ impl PostgresWriter {
         );
         sqlx::query(&query)
             .execute(&self.pool)
-            .await
-            .map_err(|e| ApitapError::PipelineError(format!("Create table: {}", e)))?;
+            .await?;
 
         let column_names: Vec<String> = schema.keys().cloned().collect();
         tracing::info!(
@@ -317,13 +317,14 @@ impl PostgresWriter {
             return Ok(());
         }
         if schema.is_empty() {
-            return Err(ApitapError::PipelineError("No columns detected".to_string()));
+            return Err(ApitapError::MergeError(
+                "No columns detected".to_string(),
+            ));
         }
 
-        let pk_name = self
-            .primary_key
-            .clone()
-            .ok_or_else(|| ApitapError::PipelineError("Postgres: primary key not configured".to_string()))?;
+        let pk_name = self.primary_key.clone().ok_or_else(|| {
+            ApitapError::MergeError("Postgres: primary key not configured".to_string())
+        })?;
 
         // Column lists (BTreeMap keeps stable order)
         let col_names_raw: Vec<&str> = schema.keys().map(|s| s.as_str()).collect();
@@ -470,8 +471,7 @@ WHEN NOT MATCHED THEN
 
         // Execute
         q.execute(&self.pool)
-            .await
-            .map_err(|e| ApitapError::Sqlx(e))?;
+            .await?;
 
         Ok(())
     }
@@ -533,8 +533,7 @@ WHEN NOT MATCHED THEN
         }
 
         q.execute(&self.pool)
-            .await
-            .map_err(|e| ApitapError::Sqlx( e))?;
+            .await?;
 
         Ok(())
     }
@@ -688,24 +687,21 @@ impl DataWriter for PostgresWriter {
     async fn begin(&self) -> Result<()> {
         sqlx::query("BEGIN")
             .execute(&self.pool)
-            .await
-            .map_err(|e| ApitapError::Sqlx(e))?;
+            .await?;
         Ok(())
     }
 
     async fn commit(&self) -> Result<()> {
         sqlx::query("COMMIT")
             .execute(&self.pool)
-            .await
-            .map_err(|e| ApitapError::Sqlx(e))?;
+            .await?;
         Ok(())
     }
 
     async fn rollback(&self) -> Result<()> {
         sqlx::query("ROLLBACK")
             .execute(&self.pool)
-            .await
-            .map_err(|e| ApitapError::Sqlx(e))?;
+            .await?;
         Ok(())
     }
 }

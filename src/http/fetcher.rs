@@ -30,10 +30,8 @@ pub async fn ndjson_stream_qs(
         .get(url)
         .query(query)
         .send()
-        .await
-        .map_err(|e| ApitapError::Reqwest(e))?
-        .error_for_status()
-        .map_err(|e| ApitapError::Reqwest(e))?;
+        .await?
+        .error_for_status()?;
 
     // Heuristic: treat as NDJSON only if content-type says so
     let is_ndjson = resp
@@ -72,6 +70,7 @@ pub async fn ndjson_stream_qs(
     let byte_stream = resp
         .bytes_stream()
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e));
+
     let reader = StreamReader::new(byte_stream);
     let lines = FramedRead::new(reader, LinesCodec::new());
     let data_path_owned = data_path.map(|s| s.to_owned());
@@ -238,10 +237,10 @@ impl PaginatedFetcher {
                 limit_param,
                 offset_param,
             } => (limit_param.clone(), offset_param.clone()),
-            _ => {
-                return Err(ApitapError::PipelineError(
-                    "Pagination::LimitOffset not configured".into(),
-                ));
+            other => {
+                return Err(ApitapError::PaginationError(format!(
+                    "Pagination::LimitOffset not configured {other:?}"
+                )));
             }
         };
 
@@ -254,13 +253,10 @@ impl PaginatedFetcher {
             .query(&[(limit_param.as_str(), limit.to_string())])
             .query(&[(offset_param.as_str(), "0")])
             .send()
-            .await
-            .map_err(|e| ApitapError::Reqwest(e))?
-            .error_for_status()
-            .map_err(|e| ApitapError::Reqwest(e))?
+            .await?
+            .error_for_status()?
             .json()
-            .await
-            .map_err(|e| ApitapError::Reqwest(e))?;
+            .await?;
 
         let mut stats = FetchStats::new();
 
@@ -349,10 +345,10 @@ impl PaginatedFetcher {
                 page_param,
                 per_page_param,
             } => (page_param.clone(), per_page_param.clone()),
-            _ => {
-                return Err(ApitapError::PipelineError(
-                    "Pagination::PageNumber not configured".into(),
-                ));
+            other => {
+                return Err(ApitapError::PaginationError(format!(
+                    "expected Pagination::PageNumber, got {other:?}"
+                )));
             }
         };
 
@@ -365,13 +361,10 @@ impl PaginatedFetcher {
             .query(&[(page_param.as_str(), "1".to_string())])
             .query(&[(per_page_param.as_str(), per_page.to_string())])
             .send()
-            .await
-            .map_err(|e| ApitapError::Reqwest(e))?
-            .error_for_status()
-            .map_err(|e| ApitapError::Reqwest(e))?
+            .await?
+            .error_for_status()?
             .json()
-            .await
-            .map_err(|e| ApitapError::Reqwest(e))?;
+            .await?;
 
         let mut stats = FetchStats::new();
 
