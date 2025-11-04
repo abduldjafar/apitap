@@ -20,7 +20,6 @@ impl Middleware for AttemptLogger {
         extensions: &mut Extensions,
         next: Next<'_>,
     ) -> MwResult<Response> {
-        // bump per-request attempt counter
         let attempt = match extensions.get_mut::<AttemptCount>() {
             Some(c) => {
                 c.0 += 1;
@@ -101,6 +100,5 @@ pub fn build_client_with_retry(reqwest_client: Client) -> ClientWithMiddleware {
         .with(SummaryLogger)
         .build();
 
-    info!("HTTP client with retry middleware initialized");
     client
 }
