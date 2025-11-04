@@ -16,21 +16,12 @@ pub fn init_tracing() {
         Err(_) => EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
     };
 
-    // JSON output opt-in (APITAP_LOG_FORMAT=json)
-    let use_json = std::env::var("APITAP_LOG_FORMAT").map(|v| v.to_lowercase() == "json").unwrap_or(false);
-
-    let fmt_layer = if use_json {
-        fmt::layer()
+    let fmt_layer = fmt::layer()
             .json()
             .with_target(false)
             .with_file(false)
-            .with_line_number(false)
-    } else {
-        fmt::layer()
-            .with_target(false)
-            .with_file(true)
-            .with_line_number(true)
-    };
+            .with_line_number(false);
+
 
     let subscriber = Registry::default()
         .with(filter)
