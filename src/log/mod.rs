@@ -16,18 +16,35 @@ pub fn init_tracing() {
         Err(_) => EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
     };
 
-    let fmt_layer = fmt::layer()
-            .json()
-            .with_target(false)
-            .with_file(false)
-            .with_line_number(false);
+    // JSON output opt-in (APITAP_LOG_FORMAT=json)
+    let use_json = std::env::var("APITAP_LOG_FORMAT").map(|v| v.to_lowercase() == "json").unwrap_or(false);
 
+    if use_json {
+        let subscriber = Registry::default()
+            .with(filter)
+            .with(
+                fmt::layer()
+                    .json()
+                    .with_target(false)
+                    .with_file(false)
+                    .with_line_number(false),
+            )
+            .with(ErrorLayer::default());
 
-    let subscriber = Registry::default()
-        .with(filter)
-        .with(fmt_layer)
-        .with(ErrorLayer::default());
+        tracing::subscriber::set_global_default(subscriber)
+            .expect("failed to set global tracing subscriber");
+    } else {
+        let subscriber = Registry::default()
+            .with(filter)
+            .with(
+                fmt::layer()
+                    .with_target(false)
+                    .with_file(true)
+                    .with_line_number(true),
+            )
+            .with(ErrorLayer::default());
 
-    tracing::subscriber::set_global_default(subscriber)
-        .expect("failed to set global tracing subscriber");
+        tracing::subscriber::set_global_default(subscriber)
+            .expect("failed to set global tracing subscriber");
+    }
 }
