@@ -126,8 +126,12 @@ targets:
   - name: postgres_sink
     type: postgres
     auth:
-      username: postgres
-      password: postgres
+      # You can provide credentials directly:
+      # username: postgres
+      # password: postgres
+      # Or reference environment variables (recommended):
+      username_env: POSTGRES_USER
+      password_env: POSTGRES_PASSWORD
     host: localhost
     database: postgres
 ```
@@ -272,6 +276,24 @@ Run a pipeline:
 ```bash
 cargo run -- --modules ./pipelines --yaml-config ./pipelines.yaml
 ```
+
+Credential management
+---------------------
+
+For security it's recommended to avoid hardcoding credentials in YAML. Instead, set environment variables and reference them in your pipeline config:
+
+```yaml
+targets:
+  - name: postgres_sink
+    type: postgres
+    auth:
+      username_env: POSTGRES_USER
+      password_env: POSTGRES_PASSWORD
+    host: localhost
+    database: postgres
+```
+
+The runner will load a local `.env` file if present (via `dotenvy`) and will validate that referenced environment variables exist and are non-empty at startup. If credentials are missing, apitap will fail with a configuration error explaining what's missing.
 
 ---
 

@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Deserializer, Serialize, de};
 use sqlx::PgPool;
 use std::collections::HashMap;
+use std::env;
 
 use crate::errors::Result as CustomResult;
 use crate::http::fetcher::Pagination;
@@ -61,10 +62,39 @@ impl SinkConn for Target {
     async fn create_conn(&self) -> CustomResult<TargetConn> {
         match self {
             Target::Postgres(pg) => {
+                // Resolve credentials: prefer env var references if provided, otherwise use inline values.
+                let username = if let Some(env_name) = &pg.auth.username_env {
+                    let val = env::var(env_name).map_err(|_| {
+                        crate::errors::ApitapError::ConfigError(format!("environment variable '{}' for postgres username is not set", env_name))
+                    })?;
+                    if val.trim().is_empty() {
+                        return Err(crate::errors::ApitapError::ConfigError(format!("environment variable '{}' for postgres username is empty", env_name)).into());
+                    }
+                    val
+                } else if let Some(u) = &pg.auth.username {
+                    u.clone()
+                } else {
+                    return Err(crate::errors::ApitapError::ConfigError("postgres username not provided".into()).into());
+                };
+
+                let password = if let Some(env_name) = &pg.auth.password_env {
+                    let val = env::var(env_name).map_err(|_| {
+                        crate::errors::ApitapError::ConfigError(format!("environment variable '{}' for postgres password is not set", env_name))
+                    })?;
+                    if val.trim().is_empty() {
+                        return Err(crate::errors::ApitapError::ConfigError(format!("environment variable '{}' for postgres password is empty", env_name)).into());
+                    }
+                    val
+                } else if let Some(p) = &pg.auth.password {
+                    p.clone()
+                } else {
+                    return Err(crate::errors::ApitapError::ConfigError("postgres password not provided".into()).into());
+                };
+
                 let url = format!(
                     "postgres://{user}:{pass}@{host}:{port}/{db}",
-                    user = pg.auth.username,
-                    pass = pg.auth.password,
+                    user = username,
+                    pass = password,
                     host = pg.host,
                     port = pg.port,
                     db = pg.database
@@ -91,8 +121,17 @@ pub struct PostgresSink {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PostgresAuth {
-    pub username: String,
-    pub password: String,
+    // Either provide username/password directly or supply the names of environment
+    // variables that contain them (username_env/password_env). Both options are
+    // supported. Fields are optional so we can validate after deserialization.
+    #[serde(default)]
+    pub username: Option<String>,
+    #[serde(default)]
+    pub password: Option<String>,
+    #[serde(default)]
+    pub username_env: Option<String>,
+    #[serde(default)]
+    pub password_env: Option<String>,
 }
 
 // (These are kept if you plan to add BigQuery later; otherwise you can remove.)
