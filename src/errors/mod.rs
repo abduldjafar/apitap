@@ -77,12 +77,13 @@ pub enum ApitapError {
 
     #[error("Tracing From Env Error: {0}")]
     FromEnvError(#[from] FromEnvError),
+
+    #[error("Reqwest Midleware Error: {0}")]
+    ReqwestMidlewareError(#[from] reqwest_middleware::Error),
 }
 
 /// Convenience Result type that uses ApitapError
 pub type Result<T> = std::result::Result<T, ApitapError>;
-
-
 
 #[cfg(test)]
 mod tests {

@@ -6,6 +6,10 @@ sources:
       kind: limit_offset
       limit_param: _limit
       offset_param: _start
+    retry:
+      max_attempts: 3
+      max_delay_secs: 5
+      min_delay_secs: 1
   
   - name: json_place_holder2
     url: https://jsonplaceholder.typicode.com/posts
@@ -14,6 +18,10 @@ sources:
       kind: limit_offset
       limit_param: _limit
       offset_param: _start
+    retry:
+      max_attempts: 3
+      max_delay_secs: 5
+      min_delay_secs: 1
 
 targets:
   - name: postgres_sink

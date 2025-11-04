@@ -1,6 +1,6 @@
-use std::{fs::File, path::Path};
 use crate::errors::Result;
 use crate::pipeline::Config as PipelineConfig;
+use std::{fs::File, path::Path};
 
 pub mod templating;
 

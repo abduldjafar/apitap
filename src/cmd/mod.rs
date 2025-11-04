@@ -47,7 +47,7 @@ pub struct Cli {
     pub yaml_config: String,
 }
 
-fn pagelabel(p: &Option<Pagination>) -> &'static str {
+fn _pagelabel(p: &Option<Pagination>) -> &'static str {
     match p {
         Some(Pagination::LimitOffset { .. }) => "limit_offset",
         Some(Pagination::PageNumber { .. }) => "page_number",
@@ -60,7 +60,7 @@ fn pagelabel(p: &Option<Pagination>) -> &'static str {
 
 #[instrument(skip_all, fields(root, cfg_path))]
 pub async fn run_pipeline(root: &str, cfg_path: &str) -> Result<()> {
-    info!(root, cfg_path, "starting apitap run");
+    info!("starting apitap run");
 
     let t0 = Instant::now();
 
@@ -69,6 +69,7 @@ pub async fn run_pipeline(root: &str, cfg_path: &str) -> Result<()> {
     info!(count = names.len(), "discovered sql modules");
 
     let cfg = load_config_from_path(cfg_path)?;
+
     info!("loaded yaml config");
 
     // Build templating env
@@ -89,12 +90,9 @@ pub async fn run_pipeline(root: &str, cfg_path: &str) -> Result<()> {
         let _g = span.enter();
 
         let m_t0 = Instant::now();
-        info!("rendering module");
         let rendered = render_one(&env, &capture, &name)?;
         let source_name = &rendered.capture.source;
         let sink_name = &rendered.capture.sink;
-
-        info!(%source_name, %sink_name, sql_len = rendered.sql.len(), "rendered + captured");
 
         // Resolve source/target from config
         let src = match cfg.source(source_name) {
@@ -119,7 +117,6 @@ pub async fn run_pipeline(root: &str, cfg_path: &str) -> Result<()> {
         let client = http.build_client();
         let url_s = http.get_url();
         let url = reqwest::Url::parse(&url_s)?;
-        info!(url = %url, pagination = pagelabel(&src.pagination), "http configured");
 
         // Destination table + inject into SQL
         let dest_table = src.table_destination_name.as_deref().ok_or_else(|| {
@@ -146,7 +143,6 @@ pub async fn run_pipeline(root: &str, cfg_path: &str) -> Result<()> {
         let conn = tgt.create_conn().await?;
         let (writer, maybe_truncate) = conn.make_writer(&writer_opts)?;
         if let Some(hook) = maybe_truncate {
-            info!("running pre-write hook");
             hook().await?;
         }
 
@@ -161,6 +157,7 @@ pub async fn run_pipeline(root: &str, cfg_path: &str) -> Result<()> {
             writer,
             writer_opts.write_mode,
             &fetch_opts,
+            &src.retry,
         )
         .await?;
         info!(

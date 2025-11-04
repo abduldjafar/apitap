@@ -21,6 +21,14 @@ pub struct Config {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct Retry {
+    pub max_attempts: u32,
+    pub max_delay_secs: u64,
+    pub min_delay_secs: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Source {
     pub name: String,
     pub url: String,
@@ -28,6 +36,7 @@ pub struct Source {
     pub table_destination_name: Option<String>,
     #[serde(default)]
     pub pagination: Option<Pagination>,
+    pub retry: Retry,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

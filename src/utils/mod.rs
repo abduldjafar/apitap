@@ -10,3 +10,4 @@ macro_rules! impl_from_error {
     };
 }
 pub mod datafusion_ext;
+pub mod http_retry;

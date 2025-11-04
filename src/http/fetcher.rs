@@ -1,5 +1,6 @@
 use crate::errors::{ApitapError, Result};
 use crate::utils::datafusion_ext::{DataFrameExt, JsonValueExt, QueryResultStream};
+use crate::utils::http_retry;
 use crate::writer::{DataWriter, WriteMode};
 use async_trait::async_trait;
 use futures::Stream;
@@ -24,8 +25,11 @@ pub async fn ndjson_stream_qs(
     url: &str,
     query: &[(String, String)],
     data_path: Option<&str>,
+    config_retry: &crate::pipeline::Retry,
 ) -> Result<BoxStream<'static, Result<Value>>> {
-    let resp = client
+    let client_with_retry = http_retry::build_client_with_retry(client.clone(), config_retry);
+
+    let resp = client_with_retry
         .get(url)
         .query(query)
         .send()
@@ -230,6 +234,7 @@ impl PaginatedFetcher {
         total_hint: Option<TotalHint>,
         writer: Arc<dyn PageWriter>,
         write_mode: WriteMode,
+        config_retry: &crate::pipeline::Retry,
     ) -> Result<FetchStats> {
         let (limit_param, offset_param) = match &self.pagination_config {
             Pagination::LimitOffset {
@@ -279,6 +284,7 @@ impl PaginatedFetcher {
                     (offset_param.clone(), "0".into()),
                 ],
                 data_path,
+                config_retry,
             )
             .await?;
             self.write_streamed_page(0, &mut s, &*writer, &mut stats, write_mode.clone())
@@ -309,6 +315,7 @@ impl PaginatedFetcher {
                 writer.clone(),
                 &mut stats,
                 write_mode.clone(),
+                config_retry,
             )
             .await
         } else {
@@ -321,6 +328,7 @@ impl PaginatedFetcher {
                 writer.clone(),
                 &mut stats,
                 write_mode.clone(),
+                config_retry,
             )
             .await
         };
@@ -338,6 +346,7 @@ impl PaginatedFetcher {
         total_hint: Option<TotalHint>,
         writer: Arc<dyn PageWriter>,
         write_mode: WriteMode,
+        config_retry: &crate::pipeline::Retry,
     ) -> Result<FetchStats> {
         let (page_param, per_page_param) = match &self.pagination_config {
             Pagination::PageNumber {
@@ -386,6 +395,7 @@ impl PaginatedFetcher {
                     (per_page_param.clone(), per_page.to_string()),
                 ],
                 data_path,
+                config_retry,
             )
             .await?;
             self.write_streamed_page(1, &mut s, &*writer, &mut stats, write_mode.clone())
@@ -434,6 +444,7 @@ impl PaginatedFetcher {
                                 (per_page_param, per_page.to_string()),
                             ],
                             data_path.as_deref(),
+                            config_retry,
                         )
                         .await
                         {
@@ -487,6 +498,7 @@ impl PaginatedFetcher {
                         (per_page_param.clone(), per_page.to_string()),
                     ],
                     data_path,
+                    config_retry,
                 )
                 .await
                 {
@@ -561,6 +573,7 @@ impl PaginatedFetcher {
         writer: Arc<dyn PageWriter>,
         _stats: &mut FetchStats,
         write_mode: WriteMode,
+        config_retry: &crate::pipeline::Retry,
     ) -> Result<()> {
         // We already wrote offset=0 ⇒ remaining i=1..pages-1 (offset = i*limit)
         let client = self.client.clone();
@@ -591,6 +604,7 @@ impl PaginatedFetcher {
                             (offset_param, offset.to_string()),
                         ],
                         data_path.as_deref(),
+                        config_retry,
                     )
                     .await
                     {
@@ -644,6 +658,7 @@ impl PaginatedFetcher {
         writer: Arc<dyn PageWriter>,
         stats: &mut FetchStats,
         write_mode: WriteMode,
+        config_retry: &crate::pipeline::Retry,
     ) -> Result<()> {
         let mut i = 1u64; // we already handled offset=0
         loop {
@@ -656,6 +671,7 @@ impl PaginatedFetcher {
                     (offset_param.to_string(), offset.to_string()),
                 ],
                 data_path,
+                config_retry,
             )
             .await
             {

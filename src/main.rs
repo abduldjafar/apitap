@@ -1,6 +1,7 @@
 use apitap::{
     cmd::{Cli, run_pipeline},
-    errors::Result, log,
+    errors::Result,
+    log,
 };
 use clap::Parser;
 
