@@ -10,7 +10,7 @@ use serde_json::Value;
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::time::Duration;
-use tokio_postgres::{NoTls, types::Json};
+use tokio_postgres::{NoTls};
 use tokio_stream::StreamExt;
 use tracing::{debug, info, debug_span};
 
@@ -156,7 +156,7 @@ impl PostgresWriter {
                 create: Some(Duration::from_secs(pool_settings.timeout_seconds)),
                 recycle: Some(Duration::from_secs(pool_settings.timeout_seconds)),
             },
-            min_idle: pool_settings.min_idle,
+            queue_mode: todo!(),
         });
 
         let pool = cfg.create_pool(Some(Runtime::Tokio1), NoTls)?;
@@ -201,7 +201,7 @@ impl PostgresWriter {
 
     async fn table_exists(&self) -> Result<bool> {
         let client = self.pool.get().await?;
-        let result: (bool,) = client.query_one(
+        let result = client.query_one(
             "SELECT EXISTS (
                 SELECT FROM information_schema.tables 
                 WHERE table_schema = 'public' 
@@ -210,15 +210,15 @@ impl PostgresWriter {
             &[&self.table_name],
         ).await?;
 
-        Ok(result.0)
+        Ok(result.is_empty())
     }
 
     pub async fn get_pool_stats(&self) -> Result<PoolStats> {
         let stats = self.pool.status();
         Ok(PoolStats {
-            size: stats.size,
-            available: stats.available,
-            waiting: stats.waiting,
+            size: stats.size as u32,
+            available: stats.available as u32,
+            waiting: stats.waiting as u32,
         })
     }
 
