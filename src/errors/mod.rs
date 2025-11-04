@@ -80,6 +80,15 @@ pub enum ApitapError {
 
     #[error("Reqwest Midleware Error: {0}")]
     ReqwestMidlewareError(#[from] reqwest_middleware::Error),
+
+    #[error("Pool error: {0}")]
+    PoolError(#[from] deadpool_postgres::PoolError),
+
+    #[error("CreatePool error: {0}")]
+    CreatePoolError(#[from] deadpool_postgres::CreatePoolError),
+
+    #[error("Postgres error: {0}")]
+    PostgresError(#[from] tokio_postgres::Error),
 }
 
 /// Convenience Result type that uses ApitapError

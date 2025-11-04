@@ -4,10 +4,13 @@ use crate::errors::{ApitapError, Result};
 use crate::utils::datafusion_ext::{QueryResult, QueryResultStream};
 use crate::writer::{DataWriter, WriteMode};
 use async_trait::async_trait;
+use deadpool_postgres::{Config, Pool, PoolConfig, Runtime};
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sqlx::{PgPool, types::Json};
 use std::borrow::Cow;
 use std::collections::BTreeMap;
+use std::time::Duration;
+use tokio_postgres::{NoTls, types::Json};
 use tokio_stream::StreamExt;
 use tracing::{debug, info, debug_span};
 
@@ -62,6 +65,41 @@ impl PgType {
     }
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct PoolSettings {
+    /// Maximum number of connections in the pool
+    #[serde(default = "default_max_size")]
+    pub max_size: usize,
+    /// Connection timeout in seconds
+    #[serde(default = "default_timeout_seconds")]
+    pub timeout_seconds: u64,
+    /// Minimum idle connections to maintain
+    #[serde(default = "default_min_idle")]
+    pub min_idle: Option<usize>,
+}
+
+fn default_max_size() -> usize {
+    10
+}
+
+fn default_timeout_seconds() -> u64 {
+    30
+}
+
+fn default_min_idle() -> Option<usize> {
+    Some(1)
+}
+
+impl Default for PoolSettings {
+    fn default() -> Self {
+        Self {
+            max_size: default_max_size(),
+            timeout_seconds: default_timeout_seconds(),
+            min_idle: default_min_idle(),
+        }
+    }
+}
+
 //=============== PostgreSQL Auto-Columns Writer ==============================//
 
 #[derive(Debug, Clone)]
@@ -82,7 +120,7 @@ impl PrimaryKey {
 }
 
 pub struct PostgresWriter {
-    pool: PgPool,
+    pool: Pool,
     table_name: String,
     batch_size: usize,
     sample_size: usize,
@@ -94,8 +132,36 @@ pub struct PostgresWriter {
 }
 
 impl PostgresWriter {
-    pub fn new(pool: PgPool, table_name: impl Into<String>) -> Self {
-        Self {
+    pub fn new_with_config(
+        host: &str,
+        port: u16,
+        user: &str,
+        password: &str,
+        dbname: &str,
+        table_name: impl Into<String>,
+        pool_settings: PoolSettings,
+    ) -> Result<Self> {
+        let mut cfg = Config::new();
+        cfg.host = Some(host.to_string());
+        cfg.port = Some(port);
+        cfg.user = Some(user.to_string());
+        cfg.password = Some(password.to_string());
+        cfg.dbname = Some(dbname.to_string());
+
+        // Configure connection pool settings
+        cfg.pool = Some(PoolConfig {
+            max_size: pool_settings.max_size,
+            timeouts: deadpool_postgres::Timeouts {
+                wait: Some(Duration::from_secs(pool_settings.timeout_seconds)),
+                create: Some(Duration::from_secs(pool_settings.timeout_seconds)),
+                recycle: Some(Duration::from_secs(pool_settings.timeout_seconds)),
+            },
+            min_idle: pool_settings.min_idle,
+        });
+
+        let pool = cfg.create_pool(Some(Runtime::Tokio1), NoTls)?;
+
+        Ok(Self {
             pool,
             table_name: table_name.into(),
             batch_size: 100,
@@ -105,7 +171,7 @@ impl PostgresWriter {
             _table_created: tokio::sync::RwLock::new(false),
             columns_cache: tokio::sync::RwLock::new(None),
             primary_key: None,
-        }
+        })
     }
 
     pub fn with_primary_key_single(mut self, name: impl Into<Option<String>>) -> Self {
@@ -134,18 +200,26 @@ impl PostgresWriter {
     }
 
     async fn table_exists(&self) -> Result<bool> {
-        let result: (bool,) = sqlx::query_as(
+        let client = self.pool.get().await?;
+        let result: (bool,) = client.query_one(
             "SELECT EXISTS (
                 SELECT FROM information_schema.tables 
                 WHERE table_schema = 'public' 
                 AND table_name = $1
             )",
-        )
-        .bind(&self.table_name)
-        .fetch_one(&self.pool)
-        .await?;
+            &[&self.table_name],
+        ).await?;
 
         Ok(result.0)
+    }
+
+    pub async fn get_pool_stats(&self) -> Result<PoolStats> {
+        let stats = self.pool.status();
+        Ok(PoolStats {
+            size: stats.size,
+            available: stats.available,
+            waiting: stats.waiting,
+        })
     }
 
     fn analyze_schema(rows: &[Value], sample_size: usize) -> Result<BTreeMap<String, PgType>> {
@@ -232,8 +306,9 @@ impl PostgresWriter {
     // Execute CREATE TABLE and instrument with a debug span
     let span = debug_span!("sql.execute", statement = "create_table", table = %self.table_name);
     let _g = span.enter();
-    let res = sqlx::query(&query).execute(&self.pool).await?;
-    debug!(rows_affected = res.rows_affected(), "create_table executed");
+    let client = self.pool.get().await?;
+    let res = client.execute(&query, &[]).await?;
+    debug!(rows_affected = res, "create_table executed");
 
     let column_names: Vec<String> = schema.keys().cloned().collect();
     tracing::info!(table = %self.table_name, columns = column_names.len(), cols = %column_names.join(", "), "created table");
@@ -288,21 +363,20 @@ impl PostgresWriter {
         match {
             let span = debug_span!("sql.execute", statement = "truncate", table = %self.table_name);
             let _g = span.enter();
-            sqlx::query(&sql).execute(&self.pool).await
+            let client = self.pool.get().await?;
+            client.execute(&sql, &[]).await
         } {
-            Ok(res) => {
-                debug!(rows_affected = res.rows_affected(), "truncate executed");
+            Ok(rows) => {
+                debug!(rows_affected = rows, "truncate executed");
                 Ok(())
             }
             Err(e) => {
                 // emulate IF EXISTS: swallow "undefined_table" (42P01)
-                if let Some(db_err) = e.as_database_error() {
-                    if db_err.code() == Some(Cow::Borrowed("42P01")) {
-                        tracing::error!(table = %self.table_name, "table does not exist, skipping TRUNCATE");
-                        return Ok(());
-                    }
+                if e.code() == Some(&tokio_postgres::error::SqlState::UNDEFINED_TABLE) {
+                    tracing::error!(table = %self.table_name, "table does not exist, skipping TRUNCATE");
+                    return Ok(());
                 }
-                Err(ApitapError::PipelineError(format!("TRUNCATE: {}", e)))
+                Err(e.into())
             }
         }
     }
@@ -690,17 +764,30 @@ impl DataWriter for PostgresWriter {
     }
 
     async fn begin(&self) -> Result<()> {
-        sqlx::query("BEGIN").execute(&self.pool).await?;
+        let client = self.pool.get().await?;
+        client.execute("BEGIN", &[]).await?;
         Ok(())
     }
 
     async fn commit(&self) -> Result<()> {
-        sqlx::query("COMMIT").execute(&self.pool).await?;
+        let client = self.pool.get().await?;
+        client.execute("COMMIT", &[]).await?;
         Ok(())
     }
 
     async fn rollback(&self) -> Result<()> {
-        sqlx::query("ROLLBACK").execute(&self.pool).await?;
+        let client = self.pool.get().await?;
+        client.execute("ROLLBACK", &[]).await?;
         Ok(())
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct PoolStats {
+    /// Total number of connections in the pool
+    pub size: u32,
+    /// Number of available connections
+    pub available: u32,
+    /// Number of tasks waiting for a connection
+    pub waiting: u32,
 }
