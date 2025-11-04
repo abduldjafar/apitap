@@ -6,6 +6,10 @@ sources:
       kind: limit_offset
       limit_param: _limit
       offset_param: _start
+    retry:
+      max_attempts: 3
+      initial_delay_ms: 1000
+      max_delay_ms: 30000
   
   - name: json_place_holder2
     url: https://jsonplaceholder.typicode.com/posts

@@ -1,5 +1,6 @@
 use crate::errors::{ApitapError, Result};
 use crate::utils::datafusion_ext::{DataFrameExt, JsonValueExt, QueryResultStream};
+use crate::utils::http_retry;
 use crate::writer::{DataWriter, WriteMode};
 use async_trait::async_trait;
 use futures::Stream;
@@ -25,7 +26,9 @@ pub async fn ndjson_stream_qs(
     query: &[(String, String)],
     data_path: Option<&str>,
 ) -> Result<BoxStream<'static, Result<Value>>> {
-    let resp = client
+    let client_with_retry = http_retry::build_client_with_retry(client.clone());
+
+    let resp = client_with_retry
         .get(url)
         .query(query)
         .send()
@@ -159,6 +162,13 @@ pub enum Pagination {
         page_size_param: Option<String>,
     },
     Default,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Retry {
+    MaxAttempts(usize),
+    MaxDelaySecs(u64),
 }
 
 /// Hint to compute total pages.
