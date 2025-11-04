@@ -8,8 +8,8 @@ sources:
       offset_param: _start
     retry:
       max_attempts: 3
-      initial_delay_ms: 1000
-      max_delay_ms: 30000
+      max_delay_sec: 1
+      min_delay_sec: 5
   
   - name: json_place_holder2
     url: https://jsonplaceholder.typicode.com/posts

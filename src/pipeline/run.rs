@@ -1,4 +1,3 @@
-// src/pipeline/run.rs
 use reqwest::Client;
 use std::sync::Arc;
 use url::Url;
@@ -25,6 +24,7 @@ pub async fn run_fetch(
     writer: Arc<dyn DataWriter>,
     write_mode: WriteMode,
     opts: &FetchOpts,
+    config_retry: &crate::pipeline::Retry,
 ) -> Result<()> {
     let page_writer = Arc::new(DataFusionPageWriter::new(dest_table, sql, writer));
 
@@ -44,6 +44,7 @@ pub async fn run_fetch(
                     None,
                     page_writer,
                     write_mode,
+                    config_retry,
                 )
                 .await?;
         }

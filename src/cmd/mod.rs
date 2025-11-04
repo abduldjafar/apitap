@@ -69,6 +69,7 @@ pub async fn run_pipeline(root: &str, cfg_path: &str) -> Result<()> {
     info!(count = names.len(), "discovered sql modules");
 
     let cfg = load_config_from_path(cfg_path)?;
+
     info!("loaded yaml config");
 
     // Build templating env
@@ -156,6 +157,7 @@ pub async fn run_pipeline(root: &str, cfg_path: &str) -> Result<()> {
             writer,
             writer_opts.write_mode,
             &fetch_opts,
+            &src.retry,
         )
         .await?;
         info!(

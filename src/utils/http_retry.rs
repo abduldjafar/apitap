@@ -89,10 +89,16 @@ impl Middleware for SummaryLogger {
     }
 }
 
-pub fn build_client_with_retry(reqwest_client: Client) -> ClientWithMiddleware {
+pub fn build_client_with_retry(
+    reqwest_client: Client,
+    config_retray: &crate::pipeline::Retry,
+) -> ClientWithMiddleware {
     let policy = ExponentialBackoff::builder()
-        .retry_bounds(Duration::from_millis(250), Duration::from_secs(8))
-        .build_with_max_retries(6);
+        .retry_bounds(
+            Duration::from_secs(config_retray.min_delay_secs),
+            Duration::from_secs(config_retray.max_delay_secs),
+        )
+        .build_with_max_retries(config_retray.max_attempts);
 
     let client = ClientBuilder::new(reqwest_client)
         .with(AttemptLogger)
