@@ -10,14 +10,23 @@ use tracing_subscriber::{EnvFilter, Registry, fmt, layer::SubscriberExt};
 /// - Output format can be set via `APITAP_LOG_FORMAT=json` to enable JSON output. Any other value uses the default
 ///   human-readable formatter.
 pub fn init_tracing() {
-    // Allow explicit APITAP_LOG_LEVEL override, else fall back to RUST_LOG / default
-    let filter = match std::env::var("APITAP_LOG_LEVEL") {
-        Ok(lvl) => EnvFilter::new(lvl),
-        Err(_) => EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
-    };
-
-    // JSON output opt-in (APITAP_LOG_FORMAT=json)
+    // Read from environment for backward compatibility
+    let level = std::env::var("APITAP_LOG_LEVEL").ok();
     let use_json = std::env::var("APITAP_LOG_FORMAT").map(|v| v.to_lowercase() == "json").unwrap_or(false);
+    init_tracing_with(level.as_deref(), use_json);
+}
+
+/// Initialize tracing with explicit options.
+///
+/// - `level`: optional log level string (e.g., "info", "debug,crate=trace"). If `None`, falls
+///    back to `RUST_LOG` or `info` as before.
+/// - `use_json`: if true, enable JSON formatter.
+pub fn init_tracing_with(level: Option<&str>, use_json: bool) {
+    // Allow explicit level override, else fall back to RUST_LOG / default
+    let filter = match level {
+        Some(lvl) => EnvFilter::new(lvl),
+        None => EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+    };
 
     if use_json {
         let subscriber = Registry::default()

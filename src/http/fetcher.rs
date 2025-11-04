@@ -15,7 +15,7 @@ use tokio_util::{
     codec::{FramedRead, LinesCodec},
     io::StreamReader,
 };
-use tracing::{ info, info_span, error, trace};
+use tracing::{ info, info_span, error, trace, debug, debug_span};
 
 // =========================== NDJSON helper ===================================
 
@@ -33,12 +33,22 @@ pub async fn ndjson_stream_qs(
     let _g = span.enter();
     let client_with_retry = http_retry::build_client_with_retry(client.clone(), config_retry);
 
-    let resp = client_with_retry
+    // Instrument the HTTP request/response at debug level with timing and status
+    let req_span = debug_span!("http.request", method = "GET", source = %url, query_len = query.len());
+    let _req_g = req_span.enter();
+    let started = std::time::Instant::now();
+
+    let mut resp = client_with_retry
         .get(url)
         .query(query)
         .send()
-        .await?
-        .error_for_status()?;
+        .await?;
+
+    let status = resp.status();
+    let elapsed = started.elapsed();
+    debug!(status = %status, elapsed_ms = elapsed.as_millis(), "http response received");
+
+    let resp = resp.error_for_status()?;
 
     // Heuristic: treat as NDJSON only if content-type says so
     let is_ndjson = resp
@@ -68,6 +78,8 @@ pub async fn ndjson_stream_qs(
             vec![target]
         };
 
+        debug!(items = items.len(), "parsed JSON response items");
+
         // Emit as a stream of Values
         let st = stream::iter(items.into_iter().map(Ok)).boxed();
         return Ok(st);
@@ -88,6 +100,8 @@ pub async fn ndjson_stream_qs(
             let line = line_res.map_err(|e| ApitapError::LinesCodecError(e))?;
             let trimmed = line.trim();
             if trimmed.is_empty() { continue; }
+
+            trace!(len = trimmed.len(), "ndjson line");
 
             let v: Value = serde_json::from_str(trimmed)
                 .map_err(|e| ApitapError::SerdeJson(e))?;
@@ -723,7 +737,7 @@ pub struct FetchStats {
     pub total_items: usize,
 }
 impl FetchStats {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             success_count: 0,
             error_count: 0,
@@ -769,13 +783,21 @@ impl PageWriter for DataFusionPageWriter {
         data: Vec<Value>,
         write_mode: WriteMode,
     ) -> Result<()> {
+        // Span covering transform -> write for this page
+        let items = data.len();
+        let span = info_span!("transform.load", table = %self.table_name, page = page_number, items = items);
+        let _g = span.enter();
+
         let json_array = Value::Array(data);
         let sdf = json_array.to_sql(&self.table_name, &self.sql).await?;
         let result_stream = sdf.inner().to_stream().await?;
+        // Use structured fields for the downstream writer call
+        let table_page = format!("{}_page_{}", self.table_name, page_number);
+        info!(table = %self.table_name, table_page = %table_page, items = items, "transform -> load: writing page");
         self.final_writer
             .write_stream(
                 QueryResultStream {
-                    table_name: format!("{}_page_{}", self.table_name, page_number),
+                    table_name: table_page,
                     data: result_stream,
                 },
                 write_mode,

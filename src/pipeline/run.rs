@@ -7,6 +7,7 @@ use crate::{
     http::fetcher::{DataFusionPageWriter, PaginatedFetcher, Pagination},
     writer::{DataWriter, WriteMode},
 };
+use crate::http::fetcher::FetchStats;
 
 #[derive(Debug, Clone)]
 pub struct FetchOpts {
@@ -25,7 +26,7 @@ pub async fn run_fetch(
     write_mode: WriteMode,
     opts: &FetchOpts,
     config_retry: &crate::pipeline::Retry,
-) -> Result<()> {
+)-> Result<FetchStats> {
     let page_writer = Arc::new(DataFusionPageWriter::new(dest_table, sql, writer));
 
     match pagination {
@@ -37,7 +38,7 @@ pub async fn run_fetch(
                 .with_limit_offset(limit_param, offset_param)
                 .with_batch_size(opts.fetch_batch_size);
 
-            fetcher
+            let stats = fetcher
                 .fetch_limit_offset(
                     opts.default_page_size.try_into().unwrap(),
                     None,
@@ -47,6 +48,7 @@ pub async fn run_fetch(
                     config_retry,
                 )
                 .await?;
+            return Ok(stats);
         }
 
         Some(Pagination::PageNumber {
@@ -55,11 +57,13 @@ pub async fn run_fetch(
         }) => {
             let _fetcher = PaginatedFetcher::new(client, url, opts.concurrency)
                 .with_batch_size(opts.fetch_batch_size);
+            return Ok(FetchStats::new());
         }
 
         Some(Pagination::PageOnly { page_param: _ }) => {
             let _fetcher = PaginatedFetcher::new(client, url, opts.concurrency)
                 .with_batch_size(opts.fetch_batch_size);
+            return Ok(FetchStats::new());
         }
 
         Some(Pagination::Cursor {
@@ -68,6 +72,7 @@ pub async fn run_fetch(
         }) => {
             let _fetcher = PaginatedFetcher::new(client, url, opts.concurrency)
                 .with_batch_size(opts.fetch_batch_size);
+            return Ok(FetchStats::new());
         }
 
         Some(Pagination::Default) | None => {
@@ -76,6 +81,4 @@ pub async fn run_fetch(
             ));
         }
     }
-
-    Ok(())
 }
