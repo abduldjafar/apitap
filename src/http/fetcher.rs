@@ -769,13 +769,21 @@ impl PageWriter for DataFusionPageWriter {
         data: Vec<Value>,
         write_mode: WriteMode,
     ) -> Result<()> {
+        // Span covering transform -> write for this page
+        let items = data.len();
+        let span = info_span!("transform.load", table = %self.table_name, page = page_number, items = items);
+        let _g = span.enter();
+
         let json_array = Value::Array(data);
         let sdf = json_array.to_sql(&self.table_name, &self.sql).await?;
         let result_stream = sdf.inner().to_stream().await?;
+        // Use structured fields for the downstream writer call
+        let table_page = format!("{}_page_{}", self.table_name, page_number);
+        info!(table = %self.table_name, table_page = %table_page, items = items, "transform -> load: writing page");
         self.final_writer
             .write_stream(
                 QueryResultStream {
-                    table_name: format!("{}_page_{}", self.table_name, page_number),
+                    table_name: table_page,
                     data: result_stream,
                 },
                 write_mode,

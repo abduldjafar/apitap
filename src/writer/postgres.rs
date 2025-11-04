@@ -232,15 +232,10 @@ impl PostgresWriter {
         sqlx::query(&query).execute(&self.pool).await?;
 
         let column_names: Vec<String> = schema.keys().cloned().collect();
-        tracing::info!(
-            "✅ Created table: {} with {} columns: {}",
-            self.table_name,
-            column_names.len(),
-            column_names.join(", ")
-        );
-        tracing::info!("   📋 Column types:");
+        tracing::info!(table = %self.table_name, columns = column_names.len(), cols = %column_names.join(", "), "created table");
+        tracing::info!("column types:");
         for (name, pg_type) in schema {
-            tracing::info!("      - {}: {}", name, pg_type.as_sql());
+            tracing::info!(column = %name, typ = %pg_type.as_sql(), "column type");
         }
 
         Ok(())
@@ -283,8 +278,8 @@ impl PostgresWriter {
         let table_sql = Self::quote_ident(&self.table_name);
         let sql = format!("TRUNCATE TABLE {}", table_sql);
 
-        tracing::info!("Truncating {}...", self.table_name);
-        tracing::info!("{}", sql);
+    tracing::info!(table = %self.table_name, "truncating table");
+    tracing::debug!(sql = %sql, "truncate sql");
 
         match sqlx::query(&sql).execute(&self.pool).await {
             Ok(_) => Ok(()),
@@ -292,10 +287,7 @@ impl PostgresWriter {
                 // emulate IF EXISTS: swallow "undefined_table" (42P01)
                 if let Some(db_err) = e.as_database_error() {
                     if db_err.code() == Some(Cow::Borrowed("42P01")) {
-                        tracing::error!(
-                            "Table {} does not exist, skipping TRUNCATE.",
-                            self.table_name
-                        );
+                        tracing::error!(table = %self.table_name, "table does not exist, skipping TRUNCATE");
                         return Ok(());
                     }
                 }
@@ -311,7 +303,7 @@ impl PostgresWriter {
     ) -> Result<()> {
         // ---- Guards ------------------------------------------------------------
         if rows.is_empty() {
-            info!("merge_batch: no rows to merge; skipping");
+            info!(table = %self.table_name, "merge_batch: no rows to merge; skipping");
             return Ok(());
         }
         if schema.is_empty() {

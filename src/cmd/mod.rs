@@ -45,6 +45,13 @@ pub struct Cli {
         default_value = "pipelines.yaml"
     )]
     pub yaml_config: String,
+    /// Emit logs in JSON format
+    #[arg(long = "log-json")]
+    pub log_json: bool,
+
+    /// Set log level (overrides env vars like RUST_LOG). Example: info,warn,debug
+    #[arg(long = "log-level")]
+    pub log_level: Option<String>,
 }
 
 fn _pagelabel(p: &Option<Pagination>) -> &'static str {
@@ -146,9 +153,9 @@ pub async fn run_pipeline(root: &str, cfg_path: &str) -> Result<()> {
             hook().await?;
         }
 
-        info!("starting fetch → transform → load");
+        info!(pipeline_name = %name, source_name = %source_name, dest_table = %dest_table, "starting fetch → transform → load");
         let step_t0 = Instant::now();
-        run_fetch(
+        let stats = run_fetch(
             client,
             url,
             &src.pagination,
@@ -160,11 +167,9 @@ pub async fn run_pipeline(root: &str, cfg_path: &str) -> Result<()> {
             &src.retry,
         )
         .await?;
-        info!(
-            elapsed_ms = step_t0.elapsed().as_millis() as u64,
-            "module completed"
-        );
-
+        
+        info!(record_count = stats.total_items as u64, elapsed_ms = step_t0.elapsed().as_millis() as u64, "module completed");
+        info!(elapsed_ms = m_t0.elapsed().as_millis() as u64, "module finished");
         info!(
             elapsed_ms = m_t0.elapsed().as_millis() as u64,
             "module finished"
