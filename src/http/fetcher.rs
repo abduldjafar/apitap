@@ -38,7 +38,7 @@ pub async fn ndjson_stream_qs(
     let _req_g = req_span.enter();
     let started = std::time::Instant::now();
 
-    let mut resp = client_with_retry
+    let  resp = client_with_retry
         .get(url)
         .query(query)
         .send()
