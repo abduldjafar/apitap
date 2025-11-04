@@ -15,7 +15,7 @@ use tokio_util::{
     codec::{FramedRead, LinesCodec},
     io::StreamReader,
 };
-use tracing::{debug, info, instrument, info_span, error, trace, warn};
+use tracing::{ info, info_span, error, trace};
 
 // =========================== NDJSON helper ===================================
 
@@ -70,7 +70,6 @@ pub async fn ndjson_stream_qs(
 
         // Emit as a stream of Values
         let st = stream::iter(items.into_iter().map(Ok)).boxed();
-        trace!(status = %resp.status(), "received regular json response");
         return Ok(st);
     }
 
@@ -111,8 +110,6 @@ pub async fn ndjson_stream_qs(
             }
         }
     };
-    trace!(status = %resp.status(), "streaming ndjson response");
-
     Ok(s.boxed())
 }
 
