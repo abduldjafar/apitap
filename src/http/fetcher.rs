@@ -15,6 +15,7 @@ use tokio_util::{
     codec::{FramedRead, LinesCodec},
     io::StreamReader,
 };
+use tracing::{debug, info, instrument, info_span, error, trace, warn};
 
 // =========================== NDJSON helper ===================================
 
@@ -27,6 +28,9 @@ pub async fn ndjson_stream_qs(
     data_path: Option<&str>,
     config_retry: &crate::pipeline::Retry,
 ) -> Result<BoxStream<'static, Result<Value>>> {
+    // Instrument HTTP/NDJSON parsing for tracing with source and optional data_path
+    let span = info_span!("http.ndjson_stream", source = %url, query_len = query.len());
+    let _g = span.enter();
     let client_with_retry = http_retry::build_client_with_retry(client.clone(), config_retry);
 
     let resp = client_with_retry
@@ -66,6 +70,7 @@ pub async fn ndjson_stream_qs(
 
         // Emit as a stream of Values
         let st = stream::iter(items.into_iter().map(Ok)).boxed();
+        trace!(status = %resp.status(), "received regular json response");
         return Ok(st);
     }
 
@@ -106,6 +111,7 @@ pub async fn ndjson_stream_qs(
             }
         }
     };
+    trace!(status = %resp.status(), "streaming ndjson response");
 
     Ok(s.boxed())
 }
@@ -130,7 +136,7 @@ pub trait PageWriter: Send + Sync {
     }
 
     async fn on_page_error(&self, page_number: u64, error: String) -> Result<()> {
-        tracing::error!("❌ Error fetching page {}: {}", page_number, error);
+        error!(page = page_number, %error, "error fetching page");
         Ok(())
     }
 
@@ -248,7 +254,11 @@ impl PaginatedFetcher {
             }
         };
 
-        writer.begin().await?;
+    // Span for the fetch operation (fetch → pages → writes)
+    let span = info_span!("fetch.limit_offset", source = %self.base_url, limit = limit);
+    let _g = span.enter();
+
+    writer.begin().await?;
 
         // ---- First request (offset=0) as JSON to read totals; also process it ----
         let first_json: Value = self
@@ -270,6 +280,7 @@ impl PaginatedFetcher {
             if let Some(arr) = first_json.pointer(p).and_then(|v| v.as_array()).cloned() {
                 let n = arr.len();
                 writer.write_page(0, arr, write_mode.clone()).await?;
+                info!(page = 0, items = n, source = %self.base_url, "wrote first page (json array path)");
                 stats.add_page(0, n);
                 wrote_first = true;
             }
@@ -287,8 +298,10 @@ impl PaginatedFetcher {
                 config_retry,
             )
             .await?;
-            self.write_streamed_page(0, &mut s, &*writer, &mut stats, write_mode.clone())
+            let wrote = self
+                .write_streamed_page(0, &mut s, &*writer, &mut stats, write_mode.clone())
                 .await?;
+            info!(page = 0, items = wrote, source = %self.base_url, "wrote first page (stream path)");
         }
 
         // Determine total pages if possible
@@ -360,7 +373,10 @@ impl PaginatedFetcher {
             }
         };
 
-        writer.begin().await?;
+    let span = info_span!("fetch.page_number", source = %self.base_url, per_page = per_page);
+    let _g = span.enter();
+
+    writer.begin().await?;
 
         // First request as JSON (page=1)
         let first_json: Value = self
@@ -382,6 +398,7 @@ impl PaginatedFetcher {
             if let Some(arr) = first_json.pointer(p).and_then(|v| v.as_array()).cloned() {
                 let n = arr.len();
                 writer.write_page(1, arr, write_mode.clone()).await?;
+                info!(page = 1, items = n, source = %self.base_url, "wrote first page (json array path)");
                 stats.add_page(1, n);
                 wrote_first = true;
             }
@@ -454,7 +471,6 @@ impl PaginatedFetcher {
                                 return;
                             }
                         };
-
                         let mut buf = Vec::with_capacity(batch_size);
                         while let Some(item) = s.next().await {
                             match item {
@@ -467,6 +483,7 @@ impl PaginatedFetcher {
                                         {
                                             let _ = writer.on_page_error(page, e.to_string()).await;
                                         }
+                                        trace!(page = page, batch = true, "wrote batch for page");
                                     }
                                 }
                                 Err(e) => {
@@ -476,9 +493,12 @@ impl PaginatedFetcher {
                         }
                         if !buf.is_empty() {
                             let out = std::mem::take(&mut buf);
+                            let cnt = out.len();
                             if let Err(e) = writer.write_page(page, out, write_mode_c.clone()).await
                             {
                                 let _ = writer.on_page_error(page, e.to_string()).await;
+                            } else {
+                                info!(page = page, items = cnt, source = %url, "wrote page remainder");
                             }
                         }
                     }
@@ -512,6 +532,7 @@ impl PaginatedFetcher {
                 let wrote = self
                     .write_streamed_page(page, &mut s, &*writer, &mut stats, write_mode.clone())
                     .await?;
+                info!(page = page, items = wrote, source = %self.base_url, "wrote page (unknown total)");
                 if wrote == 0 {
                     break;
                 } // stop on empty page
@@ -546,6 +567,7 @@ impl PaginatedFetcher {
                         writer.write_page(page, out, write_mode.clone()).await?;
                         stats.add_page(page, count);
                         written += count;
+                        trace!(page = page, batch_count = count, total_written = written, "wrote batch");
                     }
                 }
                 Err(e) => {
@@ -559,6 +581,7 @@ impl PaginatedFetcher {
             writer.write_page(page, out, write_mode).await?;
             stats.add_page(page, count);
             written += count;
+            trace!(page = page, batch_count = count, total_written = written, "wrote final batch");
         }
         Ok(written)
     }
