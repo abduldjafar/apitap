@@ -81,6 +81,4 @@ pub async fn run_fetch(
             ));
         }
     }
-
-    Ok(FetchStats::new())
 }

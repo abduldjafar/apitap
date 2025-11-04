@@ -14,14 +14,8 @@ async fn main() -> Result<()> {
     // Parse CLI early so we can set log-related env vars before initializing tracing
     let cli = Cli::parse();
 
-    if cli.log_json {
-        std::env::set_var("APITAP_LOG_FORMAT", "json");
-    }
-    if let Some(lvl) = cli.log_level.as_ref() {
-        std::env::set_var("APITAP_LOG_LEVEL", lvl);
-    }
-
-    log::init_tracing();
+    // Initialize tracing from CLI flags without mutating global env vars
+    log::init_tracing_with(cli.log_level.as_deref(), cli.log_json);
 
     run_pipeline(&cli.modules, &cli.yaml_config).await
 }
