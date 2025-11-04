@@ -723,7 +723,7 @@ pub struct FetchStats {
     pub total_items: usize,
 }
 impl FetchStats {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             success_count: 0,
             error_count: 0,
