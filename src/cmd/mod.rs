@@ -181,10 +181,6 @@ pub async fn run_pipeline(root: &str, cfg_path: &str) -> Result<()> {
             elapsed_ms = m_t0.elapsed().as_millis() as u64,
             "module finished"
         );
-        info!(
-            elapsed_ms = m_t0.elapsed().as_millis() as u64,
-            "module finished"
-        );
     }
 
     info!(
