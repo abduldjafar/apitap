@@ -9,7 +9,7 @@ use sqlx::{PgPool, types::Json};
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 use tokio_stream::StreamExt;
-use tracing::{debug, info, debug_span};
+use tracing::{debug, debug_span, info};
 
 //=============== Type Definitions ============================================//
 
@@ -229,14 +229,14 @@ impl PostgresWriter {
             table_sql,
             all_parts.join(",\n    ")
         );
-    // Execute CREATE TABLE and instrument with a debug span
-    let span = debug_span!("sql.execute", statement = "create_table", table = %self.table_name);
-    let _g = span.enter();
-    let res = sqlx::query(&query).execute(&self.pool).await?;
-    debug!(rows_affected = res.rows_affected(), "create_table executed");
+        // Execute CREATE TABLE and instrument with a debug span
+        let span = debug_span!("sql.execute", statement = "create_table", table = %self.table_name);
+        let _g = span.enter();
+        let res = sqlx::query(&query).execute(&self.pool).await?;
+        debug!(rows_affected = res.rows_affected(), "create_table executed");
 
-    let column_names: Vec<String> = schema.keys().cloned().collect();
-    tracing::info!(table = %self.table_name, columns = column_names.len(), cols = %column_names.join(", "), "created table");
+        let column_names: Vec<String> = schema.keys().cloned().collect();
+        tracing::info!(table = %self.table_name, columns = column_names.len(), cols = %column_names.join(", "), "created table");
         tracing::info!("column types:");
         for (name, pg_type) in schema {
             tracing::info!(column = %name, typ = %pg_type.as_sql(), "column type");
@@ -282,8 +282,8 @@ impl PostgresWriter {
         let table_sql = Self::quote_ident(&self.table_name);
         let sql = format!("TRUNCATE TABLE {}", table_sql);
 
-    tracing::info!(table = %self.table_name, "truncating table");
-    tracing::debug!(sql = %sql, "truncate sql");
+        tracing::info!(table = %self.table_name, "truncating table");
+        tracing::debug!(sql = %sql, "truncate sql");
 
         match {
             let span = debug_span!("sql.execute", statement = "truncate", table = %self.table_name);
@@ -469,11 +469,11 @@ WHEN NOT MATCHED THEN
         }
 
         // Execute
-    // Instrument the MERGE execution and log rows_affected
-    let span = debug_span!("sql.execute", statement = "merge", table = %self.table_name, batch_rows = rows.len());
-    let _g = span.enter();
-    let res = q.execute(&self.pool).await?;
-    debug!(rows_affected = res.rows_affected(), "merge executed");
+        // Instrument the MERGE execution and log rows_affected
+        let span = debug_span!("sql.execute", statement = "merge", table = %self.table_name, batch_rows = rows.len());
+        let _g = span.enter();
+        let res = q.execute(&self.pool).await?;
+        debug!(rows_affected = res.rows_affected(), "merge executed");
 
         Ok(())
     }
@@ -534,13 +534,13 @@ WHEN NOT MATCHED THEN
             q = self.bind_value(q, value, expected_type)?;
         }
 
-    // Instrument the insert execution and log rows_affected
-    let span = debug_span!("sql.execute", statement = "insert", table = %self.table_name, batch_rows = rows.len());
-    let _g = span.enter();
-    let res = q.execute(&self.pool).await?;
-    debug!(rows_affected = res.rows_affected(), "insert executed");
+        // Instrument the insert execution and log rows_affected
+        let span = debug_span!("sql.execute", statement = "insert", table = %self.table_name, batch_rows = rows.len());
+        let _g = span.enter();
+        let res = q.execute(&self.pool).await?;
+        debug!(rows_affected = res.rows_affected(), "insert executed");
 
-    Ok(())
+        Ok(())
     }
 
     /// Bind value with proper type conversion

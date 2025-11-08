@@ -167,9 +167,16 @@ pub async fn run_pipeline(root: &str, cfg_path: &str) -> Result<()> {
             &src.retry,
         )
         .await?;
-        
-        info!(record_count = stats.total_items as u64, elapsed_ms = step_t0.elapsed().as_millis() as u64, "module completed");
-        info!(elapsed_ms = m_t0.elapsed().as_millis() as u64, "module finished");
+
+        info!(
+            record_count = stats.total_items as u64,
+            elapsed_ms = step_t0.elapsed().as_millis() as u64,
+            "module completed"
+        );
+        info!(
+            elapsed_ms = m_t0.elapsed().as_millis() as u64,
+            "module finished"
+        );
         info!(
             elapsed_ms = m_t0.elapsed().as_millis() as u64,
             "module finished"

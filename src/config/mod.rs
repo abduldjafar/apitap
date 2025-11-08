@@ -1,7 +1,7 @@
 use crate::errors::Result;
 use crate::pipeline::Config as PipelineConfig;
-use std::{fs::File, path::Path};
 use std::env;
+use std::{fs::File, path::Path};
 
 // Validate credentials for targets that require authentication.
 fn validate_credentials(cfg: &PipelineConfig) -> Result<()> {
@@ -18,13 +18,31 @@ fn validate_credentials(cfg: &PipelineConfig) -> Result<()> {
                     // Ensure referenced env vars exist and are non-empty
                     let u_key = auth.username_env.as_ref().unwrap();
                     let p_key = auth.password_env.as_ref().unwrap();
-                    let u_val = env::var(u_key).map_err(|_| crate::errors::ApitapError::ConfigError(format!("environment variable '{}' for postgres username not set", u_key)))?;
+                    let u_val = env::var(u_key).map_err(|_| {
+                        crate::errors::ApitapError::ConfigError(format!(
+                            "environment variable '{}' for postgres username not set",
+                            u_key
+                        ))
+                    })?;
                     if u_val.trim().is_empty() {
-                        return Err(crate::errors::ApitapError::ConfigError(format!("environment variable '{}' for postgres username is empty", u_key)).into());
+                        return Err(crate::errors::ApitapError::ConfigError(format!(
+                            "environment variable '{}' for postgres username is empty",
+                            u_key
+                        ))
+                        .into());
                     }
-                    let p_val = env::var(p_key).map_err(|_| crate::errors::ApitapError::ConfigError(format!("environment variable '{}' for postgres password not set", p_key)))?;
+                    let p_val = env::var(p_key).map_err(|_| {
+                        crate::errors::ApitapError::ConfigError(format!(
+                            "environment variable '{}' for postgres password not set",
+                            p_key
+                        ))
+                    })?;
                     if p_val.trim().is_empty() {
-                        return Err(crate::errors::ApitapError::ConfigError(format!("environment variable '{}' for postgres password is empty", p_key)).into());
+                        return Err(crate::errors::ApitapError::ConfigError(format!(
+                            "environment variable '{}' for postgres password is empty",
+                            p_key
+                        ))
+                        .into());
                     }
                     continue;
                 }

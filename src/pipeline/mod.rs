@@ -65,30 +65,50 @@ impl SinkConn for Target {
                 // Resolve credentials: prefer env var references if provided, otherwise use inline values.
                 let username = if let Some(env_name) = &pg.auth.username_env {
                     let val = env::var(env_name).map_err(|_| {
-                        crate::errors::ApitapError::ConfigError(format!("environment variable '{}' for postgres username is not set", env_name))
+                        crate::errors::ApitapError::ConfigError(format!(
+                            "environment variable '{}' for postgres username is not set",
+                            env_name
+                        ))
                     })?;
                     if val.trim().is_empty() {
-                        return Err(crate::errors::ApitapError::ConfigError(format!("environment variable '{}' for postgres username is empty", env_name)).into());
+                        return Err(crate::errors::ApitapError::ConfigError(format!(
+                            "environment variable '{}' for postgres username is empty",
+                            env_name
+                        ))
+                        .into());
                     }
                     val
                 } else if let Some(u) = &pg.auth.username {
                     u.clone()
                 } else {
-                    return Err(crate::errors::ApitapError::ConfigError("postgres username not provided".into()).into());
+                    return Err(crate::errors::ApitapError::ConfigError(
+                        "postgres username not provided".into(),
+                    )
+                    .into());
                 };
 
                 let password = if let Some(env_name) = &pg.auth.password_env {
                     let val = env::var(env_name).map_err(|_| {
-                        crate::errors::ApitapError::ConfigError(format!("environment variable '{}' for postgres password is not set", env_name))
+                        crate::errors::ApitapError::ConfigError(format!(
+                            "environment variable '{}' for postgres password is not set",
+                            env_name
+                        ))
                     })?;
                     if val.trim().is_empty() {
-                        return Err(crate::errors::ApitapError::ConfigError(format!("environment variable '{}' for postgres password is empty", env_name)).into());
+                        return Err(crate::errors::ApitapError::ConfigError(format!(
+                            "environment variable '{}' for postgres password is empty",
+                            env_name
+                        ))
+                        .into());
                     }
                     val
                 } else if let Some(p) = &pg.auth.password {
                     p.clone()
                 } else {
-                    return Err(crate::errors::ApitapError::ConfigError("postgres password not provided".into()).into());
+                    return Err(crate::errors::ApitapError::ConfigError(
+                        "postgres password not provided".into(),
+                    )
+                    .into());
                 };
 
                 let url = format!(

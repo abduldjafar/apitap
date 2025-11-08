@@ -15,7 +15,7 @@ use tokio_util::{
     codec::{FramedRead, LinesCodec},
     io::StreamReader,
 };
-use tracing::{ info, info_span, error, trace, debug, debug_span};
+use tracing::{debug, debug_span, error, info, info_span, trace};
 
 // =========================== NDJSON helper ===================================
 
@@ -34,15 +34,12 @@ pub async fn ndjson_stream_qs(
     let client_with_retry = http_retry::build_client_with_retry(client.clone(), config_retry);
 
     // Instrument the HTTP request/response at debug level with timing and status
-    let req_span = debug_span!("http.request", method = "GET", source = %url, query_len = query.len());
+    let req_span =
+        debug_span!("http.request", method = "GET", source = %url, query_len = query.len());
     let _req_g = req_span.enter();
     let started = std::time::Instant::now();
 
-    let  resp = client_with_retry
-        .get(url)
-        .query(query)
-        .send()
-        .await?;
+    let resp = client_with_retry.get(url).query(query).send().await?;
 
     let status = resp.status();
     let elapsed = started.elapsed();
@@ -265,11 +262,11 @@ impl PaginatedFetcher {
             }
         };
 
-    // Span for the fetch operation (fetch → pages → writes)
-    let span = info_span!("fetch.limit_offset", source = %self.base_url, limit = limit);
-    let _g = span.enter();
+        // Span for the fetch operation (fetch → pages → writes)
+        let span = info_span!("fetch.limit_offset", source = %self.base_url, limit = limit);
+        let _g = span.enter();
 
-    writer.begin().await?;
+        writer.begin().await?;
 
         // ---- First request (offset=0) as JSON to read totals; also process it ----
         let first_json: Value = self
@@ -384,10 +381,10 @@ impl PaginatedFetcher {
             }
         };
 
-    let span = info_span!("fetch.page_number", source = %self.base_url, per_page = per_page);
-    let _g = span.enter();
+        let span = info_span!("fetch.page_number", source = %self.base_url, per_page = per_page);
+        let _g = span.enter();
 
-    writer.begin().await?;
+        writer.begin().await?;
 
         // First request as JSON (page=1)
         let first_json: Value = self
@@ -578,7 +575,12 @@ impl PaginatedFetcher {
                         writer.write_page(page, out, write_mode.clone()).await?;
                         stats.add_page(page, count);
                         written += count;
-                        trace!(page = page, batch_count = count, total_written = written, "wrote batch");
+                        trace!(
+                            page = page,
+                            batch_count = count,
+                            total_written = written,
+                            "wrote batch"
+                        );
                     }
                 }
                 Err(e) => {
@@ -592,7 +594,12 @@ impl PaginatedFetcher {
             writer.write_page(page, out, write_mode).await?;
             stats.add_page(page, count);
             written += count;
-            trace!(page = page, batch_count = count, total_written = written, "wrote final batch");
+            trace!(
+                page = page,
+                batch_count = count,
+                total_written = written,
+                "wrote final batch"
+            );
         }
         Ok(written)
     }

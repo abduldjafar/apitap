@@ -2,12 +2,12 @@ use reqwest::Client;
 use std::sync::Arc;
 use url::Url;
 
+use crate::http::fetcher::FetchStats;
 use crate::{
     errors::{ApitapError, Result},
     http::fetcher::{DataFusionPageWriter, PaginatedFetcher, Pagination},
     writer::{DataWriter, WriteMode},
 };
-use crate::http::fetcher::FetchStats;
 
 #[derive(Debug, Clone)]
 pub struct FetchOpts {
@@ -26,7 +26,7 @@ pub async fn run_fetch(
     write_mode: WriteMode,
     opts: &FetchOpts,
     config_retry: &crate::pipeline::Retry,
-)-> Result<FetchStats> {
+) -> Result<FetchStats> {
     let page_writer = Arc::new(DataFusionPageWriter::new(dest_table, sql, writer));
 
     match pagination {

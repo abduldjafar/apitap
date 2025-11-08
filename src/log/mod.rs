@@ -12,7 +12,9 @@ use tracing_subscriber::{EnvFilter, Registry, fmt, layer::SubscriberExt};
 pub fn init_tracing() {
     // Read from environment for backward compatibility
     let level = std::env::var("APITAP_LOG_LEVEL").ok();
-    let use_json = std::env::var("APITAP_LOG_FORMAT").map(|v| v.to_lowercase() == "json").unwrap_or(false);
+    let use_json = std::env::var("APITAP_LOG_FORMAT")
+        .map(|v| v.to_lowercase() == "json")
+        .unwrap_or(false);
     init_tracing_with(level.as_deref(), use_json);
 }
 
