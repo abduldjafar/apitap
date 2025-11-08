@@ -27,7 +27,7 @@ targets:
   - name: postgres_sink
     type: postgres
     auth:
-      username: postgres
-      password: postgres
+      username: poatgres
+      password: poatgres
     host: localhost
     database: postgres

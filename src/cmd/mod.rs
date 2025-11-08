@@ -65,7 +65,11 @@ fn _pagelabel(p: &Option<Pagination>) -> &'static str {
     }
 }
 
-#[instrument(skip_all, fields(root, cfg_path))]
+#[instrument(
+    name = "run_pipeline",
+    err,
+    skip_all,                    // don’t record large args by defaul
+)]
 pub async fn run_pipeline(root: &str, cfg_path: &str) -> Result<()> {
     info!("starting apitap run");
 
