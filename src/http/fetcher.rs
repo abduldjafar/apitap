@@ -57,8 +57,8 @@ pub async fn ndjson_stream_qs(
 
     if !is_ndjson {
         // -------- Regular JSON (object or array) path --------
-        let bytes = resp.bytes().await.map_err(|e| ApitapError::Reqwest(e))?;
-        let v: Value = serde_json::from_slice(&bytes).map_err(|e| ApitapError::SerdeJson(e))?;
+        let bytes = resp.bytes().await?;
+        let v: Value = serde_json::from_slice(&bytes)?;
 
         // If data_path is provided, drill into it; else use the whole value.
         let target = if let Some(p) = data_path {
@@ -94,14 +94,13 @@ pub async fn ndjson_stream_qs(
     let s = async_stream::try_stream! {
         let mut lines = lines;
         while let Some(line_res) = lines.next().await {
-            let line = line_res.map_err(|e| ApitapError::LinesCodecError(e))?;
+            let line = line_res?;
             let trimmed = line.trim();
             if trimmed.is_empty() { continue; }
 
             trace!(len = trimmed.len(), "ndjson line");
 
-            let v: Value = serde_json::from_str(trimmed)
-                .map_err(|e| ApitapError::SerdeJson(e))?;
+            let v: Value = serde_json::from_str(trimmed)?;
 
             if let Some(ref p) = data_path_owned {
                 if let Some(inner) = v.pointer(p) {
