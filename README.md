@@ -1,18 +1,14 @@
 # 🚰 Apitap
 
-**Extract from REST APIs, transform with SQL, load to warehouses**
-*HTTP-to-warehouse ETL powered by Apache DataFusion*
+**Stream JSON from REST APIs, transform with SQL, load into your warehouse**  
+*Tiny HTTP-to-warehouse ETL engine powered by Apache DataFusion & Rust*
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 ![Rust](https://img.shields.io/badge/rust-1.70+-orange.svg)
 [![DataFusion](https://img.shields.io/badge/powered%20by-DataFusion-blue)](https://datafusion.apache.org/)
 
-**Quick links:** [Quick Start](#-quick-start) • [Features](#-features) • [Examples](#-examples) • [Architecture](#-architecture) • [Roadmap](#%EF%B8%8F-roadmap)
-
----
-
-> 🌱 **Learning Project Notice**
-> This is an active learning project exploring Rust, DataFusion, and ETL design. Expect breaking changes and rough edges. Feedback and PRs welcome!
+**Quick links:**  
+[What is Apitap?](#-what-is-apitap) • [Features](#-features) • [Installation](#-installation) • [Quick Start](#-quick-start) • [Architecture](#-architecture) • [Roadmap](#%EF%B8%8F-roadmap)
 
 ---
 
@@ -21,43 +17,133 @@
 Apitap is a lightweight ETL engine that:
 
 1. **Extracts** JSON from HTTP/REST APIs (with pagination)
-2. **Transforms** it using SQL (Apache DataFusion)
-3. **Loads** it into data stores (PostgreSQL today; others to follow)
+2. **Transforms** it using **SQL** (Apache DataFusion)
+3. **Loads** it into data stores (PostgreSQL today; ClickHouse/BigQuery soon)
 
-### Why this approach?
+You describe:
 
-* Author transformations as **SQL modules** (Minijinja templates)
-* Declare inputs/outputs in the SQL via tiny helpers:
+- **What to do** in SQL modules (with tiny Minijinja helpers), and  
+- **Where to get data / where to put it** in a YAML config.
 
-  * `{{ sink(name="postgres_sink") }}`
-  * `select * from {{ use_source("json_place_holder") }};`
-* Keep runtime behavior in **YAML config** (URLs, pagination, destinations)
+Apitap does the boring bits: pagination, retries, streaming JSON into DataFusion, and upserting into your database.
+
+### Who is this for?
+
+- You like **Rust** and **SQL** and want a simple HTTP-to-warehouse tool  
+- You have a few APIs (analytics, SaaS tools, internal services) and don’t want to run a huge ETL platform  
+- You’d rather keep transformations as **SQL files in git** than scattered across app code
+
+It’s great for small/medium data stacks, side projects, and learning DataFusion.
+
+---
+
+## ⚠️ Status
+
+> **Early stage / learning project**
+
+- Currently **tested with PostgreSQL 17+** only  
+- Target compatibility is **PostgreSQL 14+**  
+  - Plan: fall back to `ON CONFLICT` for PG \< 15 instead of `MERGE`  
+- Expect breaking changes, rough edges, and sharp corners. Feedback and PRs are very welcome.
 
 ---
 
 ## ✨ Features
 
-**Working now**
+### Working now
 
-* ✅ Minijinja-based SQL modules with `sink()` and `use_source()`
-* ✅ Loader for module trees (`--modules` folder)
-* ✅ Capture of sink & source names at render time
-* ✅ HTTP client (reqwest) + pagination driver (`LimitOffset`, `PageNumber`, `PageOnly`, `Cursor`)
-* ✅ DataFusion-backed SQL execution
-* ✅ PostgreSQL writer (auto-create, merge/upsert by PK)
-* ✅ Writer factory (add new sinks without changing `main`)
-* ✅ CLI runner (`apitap-run`) with `--modules` and `--yaml-config`
+- 🧩 **SQL modules with Minijinja**  
+  - `{{ sink(name="postgres_sink") }}` declares a target  
+  - `{{ use_source("json_place_holder") }}` binds a source table  
+- 📁 **Module loader** for a whole `--modules` folder of `.sql` files
+- 🎭 **Templating env** that captures sinks & sources at render time
+- 🌐 **HTTP client + pagination driver**
+  - ✅ **LimitOffset** (e.g. `_limit` + `_start` style)
+  - 📝 Other modes (`PageNumber`, `PageOnly`, `Cursor`) **planned**
+- 🧠 **DataFusion-backed SQL execution**
+- 🐘 **PostgreSQL writer**
+  - Auto-create tables
+  - Merge/upsert by primary key  
+  - Uses Postgres 17+ today; compatibility work for 14–16 is planned
+- 🏭 **Writer factory** to add new sinks without touching `main`
+- 🖥️ **CLI runner** (`apitap-run`) with:
+  - `--modules` (SQL folder)
+  - `--yaml-config` (pipeline config)
 
-**In progress / planned**
+### In progress / planned
 
-* 🔄 ClickHouse writer
-* 🔄 BigQuery writer
-* 🔄 Incremental sync state
-* 🔄 Auth strategies (Bearer/OAuth2), retries/backoff
-* 🔄 Schema inference + evolution
-* 🔄 Observability (metrics/logging), benchmarks
+- 🔄 Pagination modes: PageNumber, PageOnly, Cursor
+- 🔄 ClickHouse writer
+- 🔄 BigQuery writer
+- 🔄 Incremental sync state
+- 🔄 Auth strategies (Bearer/OAuth2), retries/backoff tuning
+- 🔄 Schema inference + evolution
+- 🔄 Observability (metrics/logging), benchmarks
+- 🔄 Better Postgres compatibility (14+ support)
 
 Legend: ✅ Working • 🔄 In Progress • 📝 Planned
+
+---
+
+## 📦 Installation
+
+Right now you install Apitap from source. The plan is to also ship **prebuilt binaries** so you can just download `apitap-run` and use it directly.
+
+### Option 1 — Build from source (today)
+
+Requirements:
+
+- Rust toolchain (1.70+ recommended)
+- PostgreSQL 17+ for best compatibility right now
+
+Clone and build:
+
+```bash
+git clone https://github.com/yourusername/apitap.git
+cd apitap
+
+# Build a release binary
+cargo build --release
+````
+
+This will produce `target/release/apitap-run`.
+
+You can either run it in place:
+
+```bash
+./target/release/apitap-run --help
+```
+
+or put it somewhere on your `PATH`:
+
+```bash
+cp target/release/apitap-run /usr/local/bin/apitap-run
+```
+
+Then you can use:
+
+```bash
+apitap-run --modules ./pipelines --yaml-config ./pipelines.yaml
+```
+
+### Option 2 — Download binary (planned)
+
+Planned workflow:
+
+* Download a platform-specific binary from GitHub Releases:
+
+  * `apitap-run-x86_64-unknown-linux-gnu`
+  * `apitap-run-x86_64-pc-windows-msvc`
+  * `apitap-run-aarch64-apple-darwin`
+* Make it executable and put it on your `PATH`:
+
+```bash
+chmod +x apitap-run
+mv apitap-run /usr/local/bin/apitap-run
+apitap-run --help
+```
+
+This isn’t published yet, but the README is written so that when you start cutting releases, you just need to add the actual download links.
 
 ---
 
@@ -65,7 +151,7 @@ Legend: ✅ Working • 🔄 In Progress • 📝 Planned
 
 ### 1) Project layout
 
-```
+```text
 src/
   lib.rs
   config/
@@ -86,15 +172,9 @@ bin/
   apitap-run.rs           # small CLI that calls cmd::runner
 ```
 
-### 2) Build
+### 2) Prepare modules & config
 
-```bash
-cargo build --release
-```
-
-### 3) Prepare modules & config
-
-```
+```text
 pipelines/
   placeholder/
     post.sql
@@ -110,7 +190,7 @@ select *
 from {{ use_source("json_place_holder") }};
 ```
 
-**`pipelines.yaml` (shape example; adapt to your schema)**
+**`pipelines.yaml`** (shape example; adapt to your schema)
 
 ```yaml
 sources:
@@ -136,39 +216,31 @@ targets:
     database: postgres
 ```
 
-### 4) Run
+### 3) Run through the binary
 
-The runner:
+Once you’ve built or downloaded the binary:
 
-* discovers `.sql` under `--modules`
-* renders each with Minijinja (captures `sink` + `source`)
-* resolves the source/target from YAML
-* replaces `{{ use_source("X") }}` with the configured destination table name
-* fetches via HTTP (using the configured pagination)
-* runs the DataFusion SQL
-* writes into the sink (Postgres merge/upsert by `id`)
-
----
-
-## 🧪 Examples
-
-### Minimal module
-
-```sql
-{{ sink(name="postgres_sink") }}
-
-select * from {{ use_source("json_place_holder") }};
+```bash
+apitap-run \
+  --modules ./pipelines \
+  --yaml-config ./pipelines.yaml
 ```
 
-### Multiple helpers (add your own!)
+What happens:
 
-You can register more Minijinja helpers (e.g., `use_schema("...")`, `mode("append")`) the same way `sink`/`use_source` are wired today.
+1. The runner discovers `.sql` under `--modules`
+2. It renders them with Minijinja, capturing `sink()` and `use_source()`
+3. It resolves sources/targets from YAML
+4. It replaces `{{ use_source("X") }}` with the configured table name
+5. It fetches data via HTTP **using LimitOffset pagination**
+6. It runs the DataFusion SQL
+7. It writes into the sink (Postgres merge/upsert by `id`)
 
 ---
 
 ## 🏗️ Architecture
 
-```
+```text
               ┌──────────────┐
               │  CLI (clap)  │  apitap-run --modules DIR --yaml-config FILE
               └───────┬──────┘
@@ -189,8 +261,9 @@ You can register more Minijinja helpers (e.g., `use_schema("...")`, `mode("appen
                └──────┬──────────┘
                       │
        ┌──────────────▼──────────────┐
-       │ HTTP + Pagination            │  PaginatedFetcher
-       │  • reqwest client            │  LimitOffset / PageNumber / PageOnly / Cursor
+       │ HTTP + Pagination            │  
+       │  • reqwest client            │  
+       │  • **LimitOffset** driver    │  (PageNumber/PageOnly/Cursor planned)
        └──────────────┬──────────────┘
                       │
             ┌─────────▼─────────┐
@@ -203,27 +276,6 @@ You can register more Minijinja helpers (e.g., `use_schema("...")`, `mode("appen
      └─────────────────────────────────┘
 ```
 
-* **Templating:** Minijinja captures `sink`/`source` from the SQL module itself.
-* **Runner:** walks all `.sql`, renders, resolves config, executes.
-* **Fetcher:** generic pagination → stream pages → DataFusion plan → writer.
-* **Writer factory:** add new sinks in one place (no big `match` in main).
-
----
-
-## ⚙️ CLI
-
-```
-apitap --modules <DIR> --yaml-config <FILE>
-```
-
-* `--modules, -m` (default: `pipelines`) — Folder of SQL templates
-* `--yaml-config, -y` (default: `pipelines.yaml`) — Pipeline config file
-
-Help text:
-
-> Extract from REST APIs, transform with SQL, load to warehouses.
-> HTTP-to-warehouse ETL powered by DataFusion.
-
 ---
 
 ## 🛣️ Roadmap
@@ -231,38 +283,45 @@ Help text:
 **Core**
 
 * [x] Minijinja modules + capture
-* [x] Pagination driver (LO/PN/PO/Cursor)
+* [x] LimitOffset pagination driver
 * [x] DataFusion execution
-* [x] Postgres writer (merge by `id`)
+* [x] Postgres writer (MERGE/upsert, tested on 17+)
 * [x] Writer factory (no main-branching)
 * [x] CLI with `--modules` / `--yaml-config`
+
+**Postgres compatibility**
+
+* [x] Tested on PostgreSQL 17+
+* [ ] Verified on PostgreSQL 16
+* [ ] Verified on PostgreSQL 15
+* [ ] Compatibility layer for PostgreSQL 14+
+
+  * Fall back to `ON CONFLICT` when `MERGE` isn’t available
+
+**Pagination**
+
+* [x] LimitOffset (`limit` + `offset`)
+* [ ] PageNumber (`page` + `per_page`)
+* [ ] PageOnly (`page`)
+* [ ] Cursor (`cursor` tokens / next links)
 
 **Next**
 
 * [ ] ClickHouse writer
 * [ ] BigQuery writer
-* [ ] Auth, retries/backoff
 * [ ] State for incremental loads
+* [ ] Auth, retries/backoff
 * [ ] Schema inference / evolution
 * [ ] Logging/metrics + perf tuning
 * [ ] Tests and CI
-
----
-
-## 📚 Learning Notes
-
-* Rust async with Tokio
-* Traits + trait objects (`Arc<dyn DataWriter>`)
-* DataFusion logical plans
-* Backpressure and pagination
-* Clear module boundaries (`config/`, `pipeline/`, `cmd/`)
+* [ ] Release prebuilt binaries
 
 ---
 
 ## 🤝 Contributing
 
 New to Rust/data? Perfect—this is a learning repo.
-PRs, ideas, docs, and questions are welcome.
+PRs, ideas, docs, and questions are very welcome.
 
 ```bash
 git clone https://github.com/yourusername/apitap.git
@@ -274,36 +333,11 @@ cargo test
 Run a pipeline:
 
 ```bash
-cargo run -- --modules ./pipelines --yaml-config ./pipelines.yaml
+apitap-run --modules ./pipelines --yaml-config ./pipelines.yaml
 ```
-
-Credential management
----------------------
-
-For security it's recommended to avoid hardcoding credentials in YAML. Instead, set environment variables and reference them in your pipeline config:
-
-```yaml
-targets:
-  - name: postgres_sink
-    type: postgres
-    auth:
-      username_env: POSTGRES_USER
-      password_env: POSTGRES_PASSWORD
-    host: localhost
-    database: postgres
-```
-
-The runner will load a local `.env` file if present (via `dotenvy`) and will validate that referenced environment variables exist and are non-empty at startup. If credentials are missing, apitap will fail with a configuration error explaining what's missing.
 
 ---
 
 ## 📄 License
 
 MIT — see [LICENSE](LICENSE).
-
----
-
-## 🙏 Acknowledgments
-
-* [Apache Arrow](https://arrow.apache.org/) & [DataFusion](https://datafusion.apache.org/)
-* [Tokio](https://tokio.rs/) and the Rust community ❤️

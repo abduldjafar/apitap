@@ -129,8 +129,8 @@ pub async fn ndjson_stream_qs(
 pub trait PageWriter: Send + Sync {
     async fn write_page(
         &self,
-        page_number: u64,
-        data: Vec<Value>,
+        _page_number: u64,
+        _data: Vec<Value>,
         _write_mode: WriteMode,
     ) -> Result<()>;
 
