@@ -313,6 +313,9 @@ impl PostgresWriter {
         schema: &BTreeMap<String, PgType>,
     ) -> Result<()> {
         // ---- Guards ------------------------------------------------------------
+        for value in rows {
+            info!("rows value {:?}", value);
+        }
         if rows.is_empty() {
             info!(table = %self.table_name, "merge_batch: no rows to merge; skipping");
             return Ok(());
@@ -665,6 +668,8 @@ impl DataWriter for PostgresWriter {
             }
             let schema_ref = schema.as_ref().expect("schema just set");
             write_chunk!(&buf, schema_ref)?;
+        } else {
+            info!("Data is Empty!!!")
         }
 
         Ok(())

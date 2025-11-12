@@ -10,6 +10,7 @@ use datafusion::{
         stream::RecordBatchStreamAdapter,
     },
 };
+#[allow(unused_imports)]
 use futures::{Stream, StreamExt, TryFutureExt};
 use serde_json::Value;
 
@@ -54,7 +55,7 @@ impl Exec {
 
         let schema = match schema::infer_schema_streaming(json_stream).await {
             Ok(s) => s,
-            Err(e) => Arc::new(Schema::empty()),
+            Err(_e) => Arc::new(Schema::empty()),
         };
 
         let projected_schema = project_schema(&schema, projections).unwrap();

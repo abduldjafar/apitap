@@ -8,16 +8,17 @@ use crate::utils::{http_retry, schema};
 use crate::writer::{DataWriter, WriteMode};
 use async_trait::async_trait;
 use datafusion::arrow;
-use datafusion::arrow::datatypes::{SchemaRef};
+use datafusion::arrow::datatypes::SchemaRef;
 use futures::Stream;
 use futures::stream::{self, BoxStream, StreamExt, TryStreamExt};
 use reqwest::Client;
 use reqwest::header::CONTENT_TYPE;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tokio::sync::Mutex;
+use std::collections::VecDeque;
 use std::pin::Pin;
-use std::sync::Arc;
-use nanoid::nanoid;
+use std::sync::{Arc};
 use tokio_util::{
     codec::{FramedRead, LinesCodec},
     io::StreamReader,
@@ -392,7 +393,7 @@ impl PaginatedFetcher {
             }
         }
         if !wrote_first {
-            let  s = ndjson_stream_qs(
+            let s = ndjson_stream_qs(
                 &self.client,
                 &self.base_url,
                 &[
@@ -498,7 +499,7 @@ impl PaginatedFetcher {
             // Unknown total pages: fetch page=2,3,... until empty
             let mut page = 2u64;
             loop {
-                let  s = match ndjson_stream_qs(
+                let s = match ndjson_stream_qs(
                     &self.client,
                     &self.base_url,
                     &[
@@ -536,10 +537,10 @@ impl PaginatedFetcher {
 
     async fn write_streamed_page(
         &self,
-        page: u64,
+        _page: u64,
         s: BoxStreamCustom<Result<Value>>,
         writer: &dyn PageWriter,
-        stats: &mut FetchStats,
+        _stats: &mut FetchStats,
         write_mode: WriteMode,
     ) -> Result<usize> {
         writer.write_page_stream(Box::pin(s), write_mode).await?;
@@ -596,82 +597,6 @@ impl DataFusionPageWriter {
 
 #[async_trait]
 impl PageWriter for DataFusionPageWriter {
-    async fn write_page_stream(
-        &self,
-        json_stream: Pin<Box<dyn Stream<Item = Result<Value>> + Send>>,
-        write_mode: WriteMode,
-    ) -> Result<()> {
-        info!("Starting streaming pipeline...");
-
-        let ctx = get_shared_context().await;
-
-        // ✅ Wrap in Arc<Mutex> for sharing
-        let stream_lock = Arc::new(tokio::sync::Mutex::new(json_stream));
-
-        // ✅ Infer schema from first items
-        let schema = {
-            let mut stream_guard = stream_lock.lock().await;
-            let mut samples = Vec::new();
-
-            for _ in 0..100 {
-                match stream_guard.next().await {
-                    Some(Ok(item)) => samples.push(item),
-                    Some(Err(e)) => return Err(e),
-                    None => break,
-                }
-            }
-
-            if samples.is_empty() {
-                return Err(ApitapError::PipelineError("Empty stream".into()));
-            }
-
-            infer_schema_from_values(&samples)?
-        };
-
-        info!("Inferred schema with {} fields", schema.fields().len());
-        for field in schema.fields.iter() {
-            info!("schema {:?}",field)
-        }
-
-        // ✅ Create streaming factory
-        let stream_factory = {
-            let lock = stream_lock.clone();
-            move || {
-                let l = lock.clone();
-                Box::pin(async_stream::stream! {
-                    let mut stream = l.lock().await;
-                    while let Some(item) = stream.next().await {
-                        yield item;
-                    }
-                }) as Pin<Box<dyn Stream<Item = Result<Value>> + Send>>
-            }
-        };
-
-        // ✅ Register and execute
-        let table_provider = JsonStreamTableProvider::new(stream_factory);
-
-        let table_name = self.table_name.clone();
-        ctx.register_table(table_name.clone(), Arc::new(table_provider))?;
-
-        let df = ctx.sql(&self.sql).await?;
-        let record_batch_stream = df.execute_stream().await?;
-        let json_value_stream = convert_record_batch_to_json(record_batch_stream);
-
-        self.final_writer
-            .write_stream(
-                QueryResultStream {
-                    table_name:self.table_name.clone(),
-                    data: json_value_stream,
-                },
-                write_mode,
-            )
-            .await?;
-
-        let _ = ctx.deregister_table(table_name.clone());
-
-        Ok(())
-    }
-
     async fn write_page(
         &self,
         page_number: u64,
@@ -700,6 +625,136 @@ impl PageWriter for DataFusionPageWriter {
             .await?;
         Ok(())
     }
+
+async fn write_page_stream(
+    &self,
+    json_stream: Pin<Box<dyn Stream<Item = Result<serde_json::Value>> + Send>>,
+    write_mode: WriteMode,
+) -> Result<()> {
+    info!("Starting streaming pipeline...");
+    let ctx = get_shared_context().await;
+
+    // Single-producer, single-consumer channel.
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<Result<serde_json::Value>>(256);
+
+    // Move the ONLY sender into the task so the channel closes when done.
+    let stream_task = tokio::spawn(async move {
+        let mut pinned = json_stream;
+        while let Some(item) = pinned.next().await {
+            // If the receiver is gone, stop.
+            if tx.send(item).await.is_err() {
+                break;
+            }
+        }
+        // tx dropped here -> rx will eventually return None
+    });
+
+    // --------- Sample for schema (and keep the samples) ---------
+    let mut samples: Vec<serde_json::Value> = Vec::new();
+
+    while samples.len() < 100 {
+        match rx.recv().await {
+            Some(Ok(v)) => samples.push(v),
+            Some(Err(e)) => {
+                // propagate upstream error
+                return Err(e);
+            }
+            None => break, // producer finished
+        }
+    }
+
+    if samples.is_empty() {
+        return Err(ApitapError::PipelineError("Empty stream".into()));
+    }
+
+    let schema = infer_schema_from_values(&samples)?;
+    info!("Inferred schema with {} fields", schema.fields().len());
+
+    // Put samples in a shared queue so the provider's stream can emit them first.
+    let prefix = Arc::new(Mutex::new(VecDeque::from(samples)));
+
+    // Wrap remaining receiver so provider can pull from it.
+    let rx_arc = Arc::new(Mutex::new(rx));
+
+    // Stream factory: drain `prefix` first, then read from mpsc::Receiver.
+    let stream_factory = {
+        let prefix = Arc::clone(&prefix);
+        let rx_arc = Arc::clone(&rx_arc);
+        move || {
+            let prefix = Arc::clone(&prefix);
+            let rx_arc = Arc::clone(&rx_arc);
+            async_stream::stream! {
+                loop {
+                    // 1) yield buffered samples first
+                    if let Some(v) = { prefix.lock().await.pop_front() } {
+                        yield Ok(v);
+                        continue;
+                    }
+
+                    // 2) then read from the channel
+                    let mut r = rx_arc.lock().await;
+                    match r.recv().await {
+                        Some(item) => {
+                            drop(r); // release lock before yield
+                            yield item;
+                        }
+                        None => break, // channel closed: end of stream
+                    }
+                }
+            }
+            .boxed()
+        }
+    };
+
+    // If your provider can accept a schema, pass it here.
+    // Otherwise, keep your existing constructor and ensure it can handle the rows.
+    // let table_provider = JsonStreamTableProvider::with_schema(stream_factory, schema.clone());
+    let table_provider = JsonStreamTableProvider::new(stream_factory);
+
+    let table_name = self.table_name.clone();
+    ctx.register_table(table_name.clone(), Arc::new(table_provider))?;
+
+    let df = ctx.sql(&self.sql).await?;
+
+    // Optional: comment out to avoid a second full scan
+
+    let record_batch_stream = df.execute_stream().await?;
+    let mut stream = record_batch_stream;
+
+while let Some(batch) = stream.next().await {
+    match batch {
+        Ok(record_batch) => {
+            println!("Got batch with {} rows", record_batch.num_rows());
+            // Process the batch
+        }
+        Err(e) => {
+            eprintln!("Error in stream: {}", e);
+            break;
+        }
+    }
+}
+
+    
+    /**
+    let json_value_stream = convert_record_batch_to_json(record_batch_stream);
+
+
+    self.final_writer
+        .write_stream(
+            QueryResultStream {
+                table_name: self.table_name.clone(),
+                data: json_value_stream,
+            },
+            write_mode,
+        )
+        .await?;
+
+    let _ = ctx.deregister_table(table_name);
+    let _ = stream_task.await;
+    **/
+
+    Ok(())
+}
     async fn commit(&self) -> Result<()> {
         self.final_writer.commit().await
     }
@@ -743,41 +798,30 @@ pub async fn infer_schema_and_create_factory(
 }
 
 fn convert_record_batch_to_json(
-    stream: datafusion::execution::SendableRecordBatchStream,
+    mut stream: datafusion::execution::SendableRecordBatchStream,
 ) -> std::pin::Pin<Box<dyn Stream<Item = Result<serde_json::Value>> + Send + 'static>> {
-    use futures::stream::StreamExt;
+    let json_stream = async_stream::try_stream! {
+        while let Some(batch_result) = stream.next().await {
+            let batch = batch_result
+                .map_err(|e| ApitapError::PipelineError(format!("RecordBatch error: {}", e)))?;
 
-    let json_stream = stream.flat_map(|batch_result| match batch_result {
-        Ok(batch) => {
-            let rows: Vec<Result<serde_json::Value>> = (0..batch.num_rows())
-                .map(|row_index| {
-                    let mut row_json = serde_json::Map::new();
+            for row_index in 0..batch.num_rows() {
+                let mut row_json = serde_json::Map::new();
 
-                    for (col_index, field) in batch.schema().fields().iter().enumerate() {
-                        let column = batch.column(col_index);
-                        let value = arrow_value_to_json(column, row_index)
-                            .unwrap_or(serde_json::Value::Null);
-                        row_json.insert(field.name().clone(), value);
-                    }
+                for (col_index, field) in batch.schema().fields().iter().enumerate() {
+                    let column = batch.column(col_index);
+                    let value = arrow_value_to_json(column, row_index)
+                        .unwrap_or(serde_json::Value::Null);
+                    row_json.insert(field.name().clone(), value);
+                }
 
-                    Ok(serde_json::Value::Object(row_json))
-                })
-                .collect();
-
-            futures::stream::iter(rows).boxed()
+                yield serde_json::Value::Object(row_json);
+            }
         }
-        Err(e) => {
-            let err = vec![Err(ApitapError::PipelineError(format!(
-                "RecordBatch error: {}",
-                e
-            )))];
-            futures::stream::iter(err).boxed()
-        }
-    });
+    };
 
     Box::pin(json_stream)
 }
-
 /// Convert a single Arrow array value to JSON
 fn arrow_value_to_json(
     column: &arrow::array::ArrayRef,

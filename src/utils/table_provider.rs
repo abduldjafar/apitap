@@ -8,7 +8,6 @@ use datafusion::{
 use futures::Stream;
 use serde_json::Value;
 use std::{any::Any, pin::Pin, sync::Arc};
-use tokio::sync::Mutex;
 
 use crate::errors;
 use crate::utils::execution::Exec;
@@ -36,7 +35,7 @@ impl JsonStreamTableProvider {
     }
 
     /// Get or infer the schema
-    async fn get_schema(&self) -> Result<SchemaRef, Box<dyn std::error::Error>> {
+    async fn _get_schema(&self) -> Result<SchemaRef, Box<dyn std::error::Error>> {
         // Check if schema is already cached
         if let Some(cached) = self.schema.lock().await.as_ref() {
             return Ok(cached.clone());

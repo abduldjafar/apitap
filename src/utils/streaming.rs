@@ -33,7 +33,6 @@ impl TrueStreamingProcessor {
         let batch_stream = async_stream::try_stream! {
 
             let mut buffer = Vec::with_capacity(batch_size);
-            let mut pending_batch = false;
 
             while let Some(json_value) = futures::StreamExt::next(&mut json_stream).await {
                 let value = json_value?;
@@ -44,9 +43,7 @@ impl TrueStreamingProcessor {
                     let batch = direct_json_to_batch(&buffer, &schema)?;
                     buffer.clear();
                     yield batch;
-                    pending_batch = false;
                 } else {
-                    pending_batch = true;
                 }
             }
 
