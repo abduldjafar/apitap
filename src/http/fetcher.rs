@@ -629,6 +629,9 @@ impl PageWriter for DataFusionPageWriter {
         };
 
         info!("Inferred schema with {} fields", schema.fields().len());
+        for field in schema.fields.iter() {
+            info!("schema {:?}",field)
+        }
 
         // ✅ Create streaming factory
         let stream_factory = {
