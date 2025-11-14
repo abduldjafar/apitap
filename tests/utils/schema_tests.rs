@@ -35,9 +35,10 @@ fn test_infer_schema_from_values_basic_types() {
 #[test]
 fn test_infer_schema_from_values_empty() {
     let values: Vec<Value> = vec![];
-    let schema = infer_schema_from_values(&values).unwrap();
+    let result = infer_schema_from_values(&values);
     
-    assert_eq!(schema.fields().len(), 0);
+    // Consistent with streaming implementation - empty input should return error
+    assert!(result.is_err());
 }
 
 #[test]

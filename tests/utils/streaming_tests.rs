@@ -1,6 +1,6 @@
 use apitap::utils::streaming::{StreamConfig, TrueStreamingProcessor};
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
-use futures::stream;
+use futures::stream::{self, TryStreamExt};
 use serde_json::json;
 use std::sync::Arc;
 
