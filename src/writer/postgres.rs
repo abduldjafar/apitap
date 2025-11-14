@@ -23,7 +23,7 @@ pub enum PgType {
 }
 
 impl PgType {
-    fn as_sql(&self) -> &'static str {
+    pub fn as_sql(&self) -> &'static str {
         match self {
             PgType::Text => "TEXT",
             PgType::Boolean => "BOOLEAN",
@@ -33,7 +33,7 @@ impl PgType {
         }
     }
 
-    fn from_json_value(value: &Value) -> Self {
+    pub fn from_json_value(value: &Value) -> Self {
         match value {
             Value::Null => PgType::Text,
             Value::Bool(_) => PgType::Boolean,
@@ -50,7 +50,7 @@ impl PgType {
         }
     }
 
-    fn merge(&self, other: &Self) -> Self {
+    pub fn merge(&self, other: &Self) -> Self {
         match (self, other) {
             (PgType::Text, _) | (_, PgType::Text) => PgType::Text,
             (PgType::BigInt, PgType::Double) | (PgType::Double, PgType::BigInt) => PgType::Double,
@@ -83,13 +83,13 @@ impl PrimaryKey {
 
 pub struct PostgresWriter {
     pool: PgPool,
-    table_name: String,
-    batch_size: usize,
-    sample_size: usize,
-    auto_create: bool,
+    pub table_name: String,
+    pub batch_size: usize,
+    pub sample_size: usize,
+    pub auto_create: bool,
     pub auto_truncate: bool,
     columns_cache: tokio::sync::RwLock<Option<BTreeMap<String, PgType>>>,
-    primary_key: Option<String>,
+    pub primary_key: Option<String>,
 }
 
 impl PostgresWriter {
@@ -146,7 +146,7 @@ impl PostgresWriter {
         Ok(result.0)
     }
 
-    fn analyze_schema(rows: &[Value], sample_size: usize) -> Result<BTreeMap<String, PgType>> {
+    pub fn analyze_schema(rows: &[Value], sample_size: usize) -> Result<BTreeMap<String, PgType>> {
         let mut column_types: BTreeMap<String, Vec<PgType>> = BTreeMap::new();
 
         let sample = &rows[..rows.len().min(sample_size)];
@@ -174,13 +174,13 @@ impl PostgresWriter {
         Ok(final_types)
     }
 
-    fn quote_ident(ident: &str) -> String {
+    pub fn quote_ident(ident: &str) -> String {
         // "foo"  -> "\"foo\""
         // handle embedded quotes: foo"bar -> "foo""bar"
-        format!(r#""{}""#, ident.replace('"', r#"""""#))
+        format!(r#""{}""#, ident.replace('"', r#""""#))
     }
 
-    fn quote_ident_path(path: &str) -> String {
+    pub fn quote_ident_path(path: &str) -> String {
         // public.unplash -> "public"."unplash"
         path.split('.')
             .map(Self::quote_ident)
