@@ -1,7 +1,17 @@
 [package]
 name = "apitap"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
+rust-version = "1.70"
+authors = ["Abdul Haris Djafar"]
+description = "High-performance HTTP-to-warehouse ETL engine powered by Apache DataFusion & Rust"
+repository = "https://github.com/abduldjafar/apitap"
+homepage = "https://github.com/abduldjafar/apitap"
+documentation = "https://docs.rs/apitap"
+license = "MIT"
+keywords = ["etl", "datafusion", "http", "warehouse", "pipeline"]
+categories = ["database", "web-programming::http-client", "development-tools"]
+readme = "README.md"
 
 [profile.release]
 debug = true
