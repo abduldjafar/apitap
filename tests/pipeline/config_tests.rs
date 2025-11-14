@@ -1,32 +1,8 @@
-use apitap::pipeline::{Config, PostgresAuth, PostgresSink, Retry, Source, Target};
+use apitap::pipeline::{Config, PostgresAuth, Retry, Source, Target};
 use apitap::http::fetcher::Pagination;
 
 #[test]
 fn test_config_source_indexing() {
-    let source1 = Source {
-        name: "api1".to_string(),
-        url: "https://api.example.com/users".to_string(),
-        table_destination_name: Some("users".to_string()),
-        pagination: None,
-        retry: Retry {
-            max_attempts: 3,
-            max_delay_secs: 60,
-            min_delay_secs: 1,
-        },
-    };
-    
-    let source2 = Source {
-        name: "api2".to_string(),
-        url: "https://api.example.com/posts".to_string(),
-        table_destination_name: Some("posts".to_string()),
-        pagination: None,
-        retry: Retry {
-            max_attempts: 3,
-            max_delay_secs: 60,
-            min_delay_secs: 1,
-        },
-    };
-    
     let config_yaml = format!(
         r#"
 sources:

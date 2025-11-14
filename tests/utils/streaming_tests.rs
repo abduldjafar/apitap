@@ -86,13 +86,12 @@ async fn test_json_to_batch_stream_basic() {
     let json_stream = Box::pin(stream::iter(json_values));
     
     let processor = TrueStreamingProcessor::new(2);
-    let batch_stream = processor
+    let result = processor
         .json_to_batch_stream(json_stream, schema)
-        .await
-        .unwrap();
+        .await;
     
     // Verify stream was created successfully
-    assert!(batch_stream.is_some());
+    assert!(result.is_ok());
 }
 
 #[tokio::test]

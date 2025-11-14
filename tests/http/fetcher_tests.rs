@@ -11,7 +11,7 @@ fn test_fetch_stats_new() {
 
 #[test]
 fn test_fetch_stats_add_page() {
-    let mut stats = FetchStats::new();
+    let stats = FetchStats::new();
     
     // Use the private add_page method through the public interface
     // Since it's private, we'll test it indirectly through the public API
