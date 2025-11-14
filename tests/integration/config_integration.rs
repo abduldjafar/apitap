@@ -68,8 +68,8 @@ targets:
     let config: Config = serde_yaml::from_str(yaml).unwrap();
     let target = config.target("pg_sink").unwrap();
     
-    // Verify target exists with env-based auth
-    assert!(target.name() == "pg_sink");
+    // Verify target exists - just check it was found
+    assert!(matches!(target, apitap::pipeline::Target::Postgres(_)));
 }
 
 #[test]
