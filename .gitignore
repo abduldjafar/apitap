@@ -27,3 +27,4 @@ target
 *.backup
 testing.sql
 pipelines
+flamegraph*

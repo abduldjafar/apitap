@@ -88,7 +88,6 @@ pub struct PostgresWriter {
     sample_size: usize,
     auto_create: bool,
     pub auto_truncate: bool,
-    _table_created: tokio::sync::RwLock<bool>,
     columns_cache: tokio::sync::RwLock<Option<BTreeMap<String, PgType>>>,
     primary_key: Option<String>,
 }
@@ -98,11 +97,10 @@ impl PostgresWriter {
         Self {
             pool,
             table_name: table_name.into(),
-            batch_size: 100,
+            batch_size: 5000, // Increased from 100 to 5000 for better performance
             sample_size: 10,
             auto_create: true,
             auto_truncate: false,
-            _table_created: tokio::sync::RwLock::new(false),
             columns_cache: tokio::sync::RwLock::new(None),
             primary_key: None,
         }
@@ -313,6 +311,7 @@ impl PostgresWriter {
         schema: &BTreeMap<String, PgType>,
     ) -> Result<()> {
         // ---- Guards ------------------------------------------------------------
+        // Process rows without logging each individual row for performance
         if rows.is_empty() {
             info!(table = %self.table_name, "merge_batch: no rows to merge; skipping");
             return Ok(());
@@ -437,16 +436,15 @@ WHEN NOT MATCHED THEN
             ),
         };
 
-        // Log concise, useful info (full SQL at debug level)
-        let placeholder_count = rows.len() * values_per_row;
-        info!(
+        // Log concise info at INFO, details at DEBUG
+        debug!(
             table = %table_sql,
             pk = %pk_name,
             rows = rows.len(),
             cols = values_per_row,
-            placeholders = placeholder_count,
+            placeholders = rows.len() * values_per_row,
             will_update_cols = non_pk_idx.len(),
-            "MERGE batch"
+            "MERGE batch details"
         );
         debug!(%query, "MERGE SQL");
 

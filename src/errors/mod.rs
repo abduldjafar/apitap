@@ -66,7 +66,7 @@ pub enum ApitapError {
     #[error("Writer error: {0}")]
     WriterError(String),
 
-    #[error("Writer error: {0}")]
+    #[error("Pipeline error: {0}")]
     PipelineError(String),
 
     #[error("Unsupported sink: {0}")]
@@ -78,8 +78,8 @@ pub enum ApitapError {
     #[error("Tracing From Env Error: {0}")]
     FromEnvError(#[from] FromEnvError),
 
-    #[error("Reqwest Midleware Error: {0}")]
-    ReqwestMidlewareError(#[from] reqwest_middleware::Error),
+    #[error("Reqwest Middleware Error: {0}")]
+    ReqwestMiddlewareError(#[from] reqwest_middleware::Error),
 }
 
 /// Convenience Result type that uses ApitapError
