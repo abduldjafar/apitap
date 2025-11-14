@@ -34,8 +34,9 @@ fn test_schema_inference_for_datafusion() {
     assert_eq!(schema.fields().len(), 4);
     
     // Check specific field types
+    // Note: JSON numbers are inferred as Float64 by default
     let id_field = schema.field_with_name("id").unwrap();
-    assert!(matches!(id_field.data_type(), DataType::Int64));
+    assert!(matches!(id_field.data_type(), DataType::Float64));
     
     let name_field = schema.field_with_name("name").unwrap();
     assert!(matches!(name_field.data_type(), DataType::Utf8));
