@@ -65,7 +65,7 @@ impl TableProvider for JsonStreamTableProvider {
         let exec = Exec::new(self.schema.clone(), projection, {
             let factory = self.stream_factory.clone();
             move || factory()
-        });
+        })?;
 
         Ok(Arc::new(exec))
     }

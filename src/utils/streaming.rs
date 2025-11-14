@@ -1,7 +1,7 @@
 use crate::errors::Result;
 use datafusion::arrow::{
     array::RecordBatch,
-    datatypes::{Field, Schema},
+    datatypes::Schema,
 };
 use futures::Stream;
 use serde_json::Value;
@@ -59,15 +59,8 @@ impl TrueStreamingProcessor {
 }
 
 /// Direct JSON → RecordBatch without intermediate JSON serialization
-fn direct_json_to_batch(values: &[Value], schema: &Arc<Schema>) -> Result<RecordBatch> {
-    // Convert fields to Arc<Field> slice - fields() returns &[FieldRef]
-    let fields: Vec<Arc<Field>> = schema
-        .fields()
-        .iter()
-        .map(|f| f.clone()) // ✅ FieldRef is already Arc<Field>
-        .collect();
-
-    let record_batch = serde_arrow::to_record_batch(&fields, &values.to_vec())
+fn direct_json_to_batch(values: &Vec<Value>, schema: &Arc<Schema>) -> Result<RecordBatch> {
+    let record_batch = serde_arrow::to_record_batch(schema.fields(), values)
         .map_err(|e| datafusion::error::DataFusionError::External(e.into()))?;
 
     Ok(record_batch)

@@ -41,21 +41,21 @@ impl std::fmt::Debug for Exec {
 }
 
 impl Exec {
-    pub fn new<F>(schema: SchemaRef, projections: Option<&Vec<usize>>, stream_factory: F) -> Self
+    pub fn new<F>(schema: SchemaRef, projections: Option<&Vec<usize>>, stream_factory: F) -> datafusion::error::Result<Self>
     where
         F: Fn() -> Pin<Box<dyn Stream<Item = errors::Result<Value>> + Send>>
             + Send
             + Sync
             + 'static,
     {
-        let projected_schema = project_schema(&schema, projections).unwrap();
+        let projected_schema = project_schema(&schema, projections)?;
         let cache = Self::compute_properties(projected_schema.clone());
 
-        Self {
+        Ok(Self {
             stream_factory: Arc::new(stream_factory),
             projected_schema,
             cache,
-        }
+        })
     }
 
     fn compute_properties(schema: SchemaRef) -> PlanProperties {
