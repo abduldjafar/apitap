@@ -19,6 +19,7 @@ use tokio::sync::Mutex;
 use std::collections::VecDeque;
 use std::pin::Pin;
 use std::sync::{Arc};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio_util::{
     codec::{FramedRead, LinesCodec},
     io::StreamReader,
@@ -542,15 +543,13 @@ impl PaginatedFetcher {
         stats: &mut FetchStats,
         write_mode: WriteMode,
     ) -> Result<usize> {
-        // Wrap stream with a counter using Arc<Mutex>
-        let count = Arc::new(Mutex::new(0usize));
+        // Use atomic counter instead of Mutex for better performance
+        let count = Arc::new(AtomicUsize::new(0));
         let count_clone = Arc::clone(&count);
         
         let counted_stream = s.map(move |result| {
             if result.is_ok() {
-                if let Ok(mut c) = count_clone.try_lock() {
-                    *c += 1;
-                }
+                count_clone.fetch_add(1, Ordering::Relaxed);
             }
             result
         });
@@ -558,7 +557,7 @@ impl PaginatedFetcher {
         writer.write_page_stream(Box::pin(counted_stream), write_mode).await?;
         
         // Get final count
-        let final_count = *count.lock().await;
+        let final_count = count.load(Ordering::Relaxed);
         stats.add_page(_page, final_count);
         Ok(final_count)
     }
@@ -650,8 +649,8 @@ async fn write_page_stream(
     debug!("starting streaming pipeline");
     let ctx = get_shared_context().await;
 
-    // Single-producer, single-consumer channel.
-    let (tx, mut rx) = tokio::sync::mpsc::channel::<Result<serde_json::Value>>(256);
+    // Single-producer, single-consumer channel with increased buffer for better throughput
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<Result<serde_json::Value>>(8192);
 
     // Move the ONLY sender into the task so the channel closes when done.
     let _stream_task = tokio::spawn(async move {

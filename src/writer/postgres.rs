@@ -97,7 +97,7 @@ impl PostgresWriter {
         Self {
             pool,
             table_name: table_name.into(),
-            batch_size: 100,
+            batch_size: 5000, // Increased from 100 to 5000 for better performance
             sample_size: 10,
             auto_create: true,
             auto_truncate: false,
