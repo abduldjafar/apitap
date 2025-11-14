@@ -101,7 +101,6 @@ pub async fn run_pipeline(root: &str, cfg_path: &str) -> Result<()> {
         let span = tracing::info_span!("module", idx = idx + 1, name = %name);
         let _g = span.enter();
 
-        let m_t0 = Instant::now();
         let rendered = render_one(&env, &capture, &name)?;
         let source_name = &rendered.capture.source;
         let sink_name = &rendered.capture.sink;

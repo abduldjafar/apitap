@@ -539,11 +539,28 @@ impl PaginatedFetcher {
         _page: u64,
         s: BoxStreamCustom<Result<Value>>,
         writer: &dyn PageWriter,
-        _stats: &mut FetchStats,
+        stats: &mut FetchStats,
         write_mode: WriteMode,
     ) -> Result<usize> {
-        writer.write_page_stream(Box::pin(s), write_mode).await?;
-        Ok(0)
+        // Wrap stream with a counter using Arc<Mutex>
+        let count = Arc::new(Mutex::new(0usize));
+        let count_clone = Arc::clone(&count);
+        
+        let counted_stream = s.map(move |result| {
+            if result.is_ok() {
+                if let Ok(mut c) = count_clone.try_lock() {
+                    *c += 1;
+                }
+            }
+            result
+        });
+        
+        writer.write_page_stream(Box::pin(counted_stream), write_mode).await?;
+        
+        // Get final count
+        let final_count = *count.lock().await;
+        stats.add_page(_page, final_count);
+        Ok(final_count)
     }
 }
 
