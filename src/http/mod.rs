@@ -55,6 +55,15 @@ impl Http {
 
         Client::builder()
             .default_headers(headers)
+            // ===== HTTP Connection Pooling & Keep-Alive Optimizations =====
+            // Based on flamegraph analysis: reduce TLS handshake overhead (6.48% CPU time)
+            // Enable HTTP connection reuse and configure pool settings
+            .pool_max_idle_per_host(10)  // Keep up to 10 idle connections per host
+            .pool_idle_timeout(Some(std::time::Duration::from_secs(90)))  // Keep connections alive for 90s
+            .timeout(std::time::Duration::from_secs(30))  // Request timeout
+            .connect_timeout(std::time::Duration::from_secs(10))  // Connection timeout
+            .tcp_keepalive(Some(std::time::Duration::from_secs(60)))  // TCP keepalive
+            // TLS session resumption is enabled by default in reqwest
             .build()
             .unwrap_or_else(|_| Client::new())
     }

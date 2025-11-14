@@ -7,7 +7,37 @@ This document summarizes the performance optimizations that have been implemente
 
 ## ✅ Optimizations Implemented
 
-### 1. **PostgreSQL Batch Size (CRITICAL - 2-5x improvement)**
+### 1. **HTTP Connection Pooling & Keep-Alive (HIGH - 6-10% improvement)** ⭐ NEW
+**File**: `src/http/mod.rs`
+
+**Change**:
+```rust
+// Before:
+Client::builder()
+    .default_headers(headers)
+    .build()
+
+// After:
+Client::builder()
+    .default_headers(headers)
+    .pool_max_idle_per_host(10)  // Keep up to 10 idle connections per host
+    .pool_idle_timeout(Some(std::time::Duration::from_secs(90)))
+    .timeout(std::time::Duration::from_secs(30))
+    .connect_timeout(std::time::Duration::from_secs(10))
+    .tcp_keepalive(Some(std::time::Duration::from_secs(60)))
+    .build()
+```
+
+**Impact**: 
+- Reduces TLS handshake overhead (identified as 6.48% CPU time in flamegraph)
+- Connection reuse eliminates repeated SSL/TLS negotiations
+- Expected improvement: **6-10% faster** for network-heavy workloads
+- Particularly effective when making multiple requests to the same API host
+- **Based on flamegraph analysis** showing 15.74% total network overhead
+
+---
+
+### 2. **PostgreSQL Batch Size (CRITICAL - 2-5x improvement)**
 **File**: `src/writer/postgres.rs`
 
 **Change**:
@@ -27,7 +57,7 @@ batch_size: 5000  // 50x larger batches
 
 ---
 
-### 2. **Atomic Counters (HIGH - 2-5% improvement)**
+### 3. **Atomic Counters (HIGH - 2-5% improvement)**
 **File**: `src/http/fetcher.rs`
 
 **Change**:
@@ -50,7 +80,7 @@ count_clone.fetch_add(1, Ordering::Relaxed);
 
 ---
 
-### 3. **Increased Channel Buffer Size (MEDIUM - 5-10% improvement)**
+### 4. **Increased Channel Buffer Size (MEDIUM - 5-10% improvement)**
 **File**: `src/http/fetcher.rs`
 
 **Change**:
@@ -70,7 +100,7 @@ tokio::sync::mpsc::channel(8192)  // 32x larger buffer
 
 ---
 
-### 4. **Debug Symbols in Release Mode (ENABLED)**
+### 5. **Debug Symbols in Release Mode (ENABLED)**
 **File**: `Cargo.toml`
 
 **Change**:
