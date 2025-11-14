@@ -78,10 +78,12 @@ impl FieldInference {
                 self.data_type = self.data_type.merge(FieldType::String);
             }
             Value::Array(_) => {
-                self.data_type = self.data_type.merge(FieldType::List);
+                // Serialize arrays as JSON strings until recursive inference is implemented
+                self.data_type = self.data_type.merge(FieldType::String);
             }
             Value::Object(_) => {
-                self.data_type = self.data_type.merge(FieldType::Struct);
+                // Serialize objects as JSON strings until recursive inference is implemented
+                self.data_type = self.data_type.merge(FieldType::String);
             }
         }
     }
