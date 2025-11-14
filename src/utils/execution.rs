@@ -44,20 +44,13 @@ impl std::fmt::Debug for Exec {
 }
 
 impl Exec {
-    pub async fn new<F>(projections: Option<&Vec<usize>>, stream_factory: F) -> Self
+    pub fn new<F>(schema: SchemaRef, projections: Option<&Vec<usize>>, stream_factory: F) -> Self
     where
         F: Fn() -> Pin<Box<dyn Stream<Item = errors::Result<Value>> + Send>>
             + Send
             + Sync
             + 'static,
     {
-        let json_stream = (stream_factory)();
-
-        let schema = match schema::infer_schema_streaming(json_stream).await {
-            Ok(s) => s,
-            Err(_e) => Arc::new(Schema::empty()),
-        };
-
         let projected_schema = project_schema(&schema, projections).unwrap();
         let cache = Self::compute_properties(projected_schema.clone());
 

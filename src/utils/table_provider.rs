@@ -5,50 +5,23 @@ use datafusion::{
     logical_expr::{Expr, TableProviderFilterPushDown},
     physical_plan::ExecutionPlan,
 };
-use futures::Stream;
-use serde_json::Value;
-use std::{any::Any, pin::Pin, sync::Arc};
+use std::{any::Any, sync::Arc};
 
-use crate::errors;
-use crate::utils::execution::Exec;
+use crate::utils::execution::{Exec, JsonStreamFactory};
 
 /// Table provider for streaming JSON data
-pub type JsonStreamFactory =
-    Arc<dyn Fn() -> Pin<Box<dyn Stream<Item = errors::Result<Value>> + Send>> + Send + Sync>;
 pub struct JsonStreamTableProvider {
     stream_factory: JsonStreamFactory,
-    schema: Arc<tokio::sync::Mutex<Option<SchemaRef>>>,
+    schema: SchemaRef,
 }
 
 impl JsonStreamTableProvider {
-    pub fn new<F>(stream_factory: F) -> Self
-    where
-        F: Fn() -> Pin<Box<dyn Stream<Item = errors::Result<Value>> + Send>>
-            + Send
-            + Sync
-            + 'static,
+    pub fn new(stream_factory: JsonStreamFactory, schema: SchemaRef) -> Self
     {
         Self {
-            stream_factory: Arc::new(stream_factory),
-            schema: Arc::new(tokio::sync::Mutex::new(None)),
+            stream_factory,
+            schema,
         }
-    }
-
-    /// Get or infer the schema
-    async fn _get_schema(&self) -> Result<SchemaRef, Box<dyn std::error::Error>> {
-        // Check if schema is already cached
-        if let Some(cached) = self.schema.lock().await.as_ref() {
-            return Ok(cached.clone());
-        }
-
-        // Infer schema from stream
-        let stream = (self.stream_factory)();
-        let inferred = crate::utils::schema::infer_schema_streaming(stream).await?;
-
-        // Cache it
-        *self.schema.lock().await = Some(inferred.clone());
-
-        Ok(inferred)
     }
 }
 
@@ -67,7 +40,7 @@ impl TableProvider for JsonStreamTableProvider {
     }
 
     fn schema(&self) -> SchemaRef {
-        Arc::new(Schema::empty())
+        self.schema.clone()
     }
 
     fn table_type(&self) -> TableType {
@@ -81,20 +54,20 @@ impl TableProvider for JsonStreamTableProvider {
         filters: &[Expr],
         limit: Option<usize>,
     ) -> datafusion::error::Result<Arc<dyn ExecutionPlan>> {
-        // Log what filters/limits are being pushed down
+        // Log what filters/limits are being pushed down at debug level
         if !filters.is_empty() {
-            println!("Filters: {:?}", filters);
+            tracing::debug!(filters = ?filters, "filters pushed down");
         }
         if let Some(l) = limit {
-            println!("Limit: {}", l);
+            tracing::debug!(limit = l, "limit pushed down");
         }
 
-        let exec = Exec::new(projection, {
+        let exec = Exec::new(self.schema.clone(), projection, {
             let factory = self.stream_factory.clone();
             move || factory()
         });
 
-        Ok(Arc::new(exec.await))
+        Ok(Arc::new(exec))
     }
 
     fn supports_filters_pushdown(

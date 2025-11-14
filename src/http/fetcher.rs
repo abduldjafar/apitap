@@ -629,16 +629,16 @@ impl PageWriter for DataFusionPageWriter {
 async fn write_page_stream(
     &self,
     json_stream: Pin<Box<dyn Stream<Item = Result<serde_json::Value>> + Send>>,
-    write_mode: WriteMode,
+    _write_mode: WriteMode,
 ) -> Result<()> {
-    info!("Starting streaming pipeline...");
+    debug!("starting streaming pipeline");
     let ctx = get_shared_context().await;
 
     // Single-producer, single-consumer channel.
     let (tx, mut rx) = tokio::sync::mpsc::channel::<Result<serde_json::Value>>(256);
 
     // Move the ONLY sender into the task so the channel closes when done.
-    let stream_task = tokio::spawn(async move {
+    let _stream_task = tokio::spawn(async move {
         let mut pinned = json_stream;
         while let Some(item) = pinned.next().await {
             // If the receiver is gone, stop.
@@ -667,8 +667,12 @@ async fn write_page_stream(
         return Err(ApitapError::PipelineError("Empty stream".into()));
     }
 
-    let schema = infer_schema_from_values(&samples)?;
-    info!("Inferred schema with {} fields", schema.fields().len());
+    let arrow_schema = infer_schema_from_values(&samples)?;
+    debug!(
+        fields = arrow_schema.fields().len(),
+        field_names = ?arrow_schema.fields().iter().map(|f| f.name().as_str()).collect::<Vec<_>>(),
+        "inferred schema"
+    );
 
     // Put samples in a shared queue so the provider's stream can emit them first.
     let prefix = Arc::new(Mutex::new(VecDeque::from(samples)));
@@ -706,52 +710,49 @@ async fn write_page_stream(
         }
     };
 
-    // If your provider can accept a schema, pass it here.
-    // Otherwise, keep your existing constructor and ensure it can handle the rows.
-    // let table_provider = JsonStreamTableProvider::with_schema(stream_factory, schema.clone());
-    let table_provider = JsonStreamTableProvider::new(stream_factory);
+    // Create table provider with schema
+    let table_provider = JsonStreamTableProvider::new(Arc::new(stream_factory), arrow_schema);
 
-    let table_name = self.table_name.clone();
-    ctx.register_table(table_name.clone(), Arc::new(table_provider))?;
-
-    let df = ctx.sql(&self.sql).await?;
-
-    // Optional: comment out to avoid a second full scan
-
-    let record_batch_stream = df.execute_stream().await?;
-    let mut stream = record_batch_stream;
-
-while let Some(batch) = stream.next().await {
-    match batch {
-        Ok(record_batch) => {
-            println!("Got batch with {} rows", record_batch.num_rows());
-            // Process the batch
-        }
-        Err(e) => {
-            eprintln!("Error in stream: {}", e);
-            break;
-        }
-    }
-}
-
+    // Use a unique table name to avoid conflicts in shared context
+    // Use only alphanumeric characters to avoid SQL parsing issues
+    let alphabet: [char; 36] = [
+        '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
+        'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j',
+        'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't',
+        'u', 'v', 'w', 'x', 'y', 'z',
+    ];
+    let unique_id = nanoid::nanoid!(10, &alphabet);
+    let unique_table_name = format!("{}_{}", self.table_name, unique_id);
     
-    /**
+    // Deregister table if it exists from previous runs (best effort)
+    let _ = ctx.deregister_table(&unique_table_name);
+    
+    ctx.register_table(unique_table_name.clone(), Arc::new(table_provider))?;
+
+    // Replace the original table name in SQL with the unique table name
+    let sql_with_unique_table = self.sql.replace(&self.table_name, &unique_table_name);
+    
+    let df = ctx.sql(&sql_with_unique_table).await?;
+
+    // Execute query and get streaming results
+    let record_batch_stream = df.execute_stream().await?;
+    
+    // Convert RecordBatch stream to JSON stream for the writer
     let json_value_stream = convert_record_batch_to_json(record_batch_stream);
 
-
+    // Write the streaming results to the final destination
     self.final_writer
         .write_stream(
             QueryResultStream {
                 table_name: self.table_name.clone(),
                 data: json_value_stream,
             },
-            write_mode,
+            _write_mode,
         )
         .await?;
 
-    let _ = ctx.deregister_table(table_name);
-    let _ = stream_task.await;
-    **/
+    // Clean up: deregister the table
+    let _ = ctx.deregister_table(&unique_table_name);
 
     Ok(())
 }
@@ -797,6 +798,7 @@ pub async fn infer_schema_and_create_factory(
     Ok((schema, factory))
 }
 
+#[allow(dead_code)]
 fn convert_record_batch_to_json(
     mut stream: datafusion::execution::SendableRecordBatchStream,
 ) -> std::pin::Pin<Box<dyn Stream<Item = Result<serde_json::Value>> + Send + 'static>> {
@@ -823,6 +825,7 @@ fn convert_record_batch_to_json(
     Box::pin(json_stream)
 }
 /// Convert a single Arrow array value to JSON
+#[allow(dead_code)]
 fn arrow_value_to_json(
     column: &arrow::array::ArrayRef,
     row_index: usize,
@@ -847,6 +850,14 @@ fn arrow_value_to_json(
             let array = column.as_any().downcast_ref::<Int32Array>().unwrap();
             Ok(serde_json::json!(array.value(row_index) as i64))
         }
+        arrow::datatypes::DataType::UInt64 => {
+            let array = column.as_any().downcast_ref::<UInt64Array>().unwrap();
+            Ok(serde_json::json!(array.value(row_index)))
+        }
+        arrow::datatypes::DataType::UInt32 => {
+            let array = column.as_any().downcast_ref::<UInt32Array>().unwrap();
+            Ok(serde_json::json!(array.value(row_index) as u64))
+        }
         arrow::datatypes::DataType::Float64 => {
             let array = column.as_any().downcast_ref::<Float64Array>().unwrap();
             Ok(serde_json::json!(array.value(row_index)))
@@ -857,6 +868,12 @@ fn arrow_value_to_json(
         }
         arrow::datatypes::DataType::Utf8 => {
             let array = column.as_any().downcast_ref::<StringArray>().unwrap();
+            Ok(serde_json::Value::String(
+                array.value(row_index).to_string(),
+            ))
+        }
+        arrow::datatypes::DataType::LargeUtf8 => {
+            let array = column.as_any().downcast_ref::<LargeStringArray>().unwrap();
             Ok(serde_json::Value::String(
                 array.value(row_index).to_string(),
             ))
