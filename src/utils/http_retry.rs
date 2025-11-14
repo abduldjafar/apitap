@@ -5,7 +5,7 @@ use reqwest_middleware::{
 };
 use reqwest_retry::{RetryTransientMiddleware, policies::ExponentialBackoff};
 use std::time::{Duration, Instant};
-use tracing::{info, warn};
+use tracing::warn;
 
 #[derive(Debug, Default, Clone)]
 struct AttemptCount(pub u32);
@@ -34,14 +34,14 @@ impl Middleware for AttemptLogger {
         let method = req.method().clone();
         let url = req.url().clone();
         let t0 = Instant::now();
-        info!("→ attempt #{attempt} {method} {url}");
+        tracing::debug!("→ attempt #{attempt} {method} {url}");
 
         let res = next.run(req, extensions).await;
 
         match &res {
             Ok(resp) => {
                 let dt = t0.elapsed();
-                info!(
+                tracing::debug!(
                     "← attempt #{attempt} {} {} in {:?}",
                     resp.status(),
                     resp.url(),
@@ -75,15 +75,19 @@ impl Middleware for SummaryLogger {
 
         let attempts = extensions.get::<AttemptCount>().map(|c| c.0).unwrap_or(1);
         match &res {
-            Ok(resp) => info!(
-                "✔ {method} {url} -> {} in {:?} (attempts: {attempts})",
-                resp.status(),
-                t0.elapsed()
-            ),
-            Err(err) => warn!(
-                "✖ {method} {url} failed after {:?} (attempts: {attempts}): {err}",
-                t0.elapsed()
-            ),
+            Ok(resp) => {
+                tracing::debug!(
+                    "✔ {method} {url} -> {} in {:?} (attempts: {attempts})",
+                    resp.status(),
+                    t0.elapsed()
+                );
+            }
+            Err(err) => {
+                warn!(
+                    "✖ {method} {url} failed after {:?} (attempts: {attempts}): {err}",
+                    t0.elapsed()
+                );
+            }
         }
         res
     }

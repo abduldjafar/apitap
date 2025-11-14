@@ -1,7 +1,7 @@
 use std::{any::Any, fmt, pin::Pin, sync::Arc};
 
 use datafusion::{
-    arrow::datatypes::{Schema, SchemaRef},
+    arrow::datatypes::SchemaRef,
     common::project_schema,
     execution::{SendableRecordBatchStream, TaskContext},
     physical_expr::EquivalenceProperties,
@@ -16,10 +16,7 @@ use serde_json::Value;
 
 use crate::{
     errors::{self},
-    utils::{
-        schema,
-        streaming::{self, StreamConfig},
-    },
+    utils::streaming::{self, StreamConfig},
 };
 
 /// Type alias for the factory function

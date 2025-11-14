@@ -1,5 +1,5 @@
 use datafusion::{
-    arrow::datatypes::{Schema, SchemaRef},
+    arrow::datatypes::SchemaRef,
     catalog::Session,
     datasource::{TableProvider, TableType},
     logical_expr::{Expr, TableProviderFilterPushDown},

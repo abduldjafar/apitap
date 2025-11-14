@@ -246,7 +246,6 @@ impl PaginatedFetcher {
         self
     }
 
-    // -------------------- Public entry points --------------------------------
     pub async fn limit_offset_stream(
         &self,
         limit: u64,

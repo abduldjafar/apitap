@@ -88,7 +88,6 @@ pub struct PostgresWriter {
     sample_size: usize,
     auto_create: bool,
     pub auto_truncate: bool,
-    _table_created: tokio::sync::RwLock<bool>,
     columns_cache: tokio::sync::RwLock<Option<BTreeMap<String, PgType>>>,
     primary_key: Option<String>,
 }
@@ -102,7 +101,6 @@ impl PostgresWriter {
             sample_size: 10,
             auto_create: true,
             auto_truncate: false,
-            _table_created: tokio::sync::RwLock::new(false),
             columns_cache: tokio::sync::RwLock::new(None),
             primary_key: None,
         }
@@ -438,16 +436,15 @@ WHEN NOT MATCHED THEN
             ),
         };
 
-        // Log concise, useful info (full SQL at debug level)
-        let placeholder_count = rows.len() * values_per_row;
-        info!(
+        // Log concise info at INFO, details at DEBUG
+        debug!(
             table = %table_sql,
             pk = %pk_name,
             rows = rows.len(),
             cols = values_per_row,
-            placeholders = placeholder_count,
+            placeholders = rows.len() * values_per_row,
             will_update_cols = non_pk_idx.len(),
-            "MERGE batch"
+            "MERGE batch details"
         );
         debug!(%query, "MERGE SQL");
 

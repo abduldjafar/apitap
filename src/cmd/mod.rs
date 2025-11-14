@@ -71,17 +71,18 @@ fn _pagelabel(p: &Option<Pagination>) -> &'static str {
     skip_all,                    // don’t record large args by defaul
 )]
 pub async fn run_pipeline(root: &str, cfg_path: &str) -> Result<()> {
-    info!("starting apitap run");
+    info!("═══════════════════════════════════════════════════════════");
+    info!("🚀 Starting Apitap Pipeline Execution");
+    info!("═══════════════════════════════════════════════════════════");
 
     let t0 = Instant::now();
 
     // Discover + load
     let names = list_sql_templates(root)?;
-    info!(count = names.len(), "discovered sql modules");
+    info!("📂 Discovered {} SQL module(s)", names.len());
 
     let cfg = load_config_from_path(cfg_path)?;
-
-    info!("loaded yaml config");
+    info!("⚙️  Configuration loaded successfully");
 
     // Build templating env
     let capture = Arc::new(Mutex::new(RenderCapture::default()));
@@ -157,7 +158,9 @@ pub async fn run_pipeline(root: &str, cfg_path: &str) -> Result<()> {
             hook().await?;
         }
 
-        info!(pipeline_name = %name, source_name = %source_name, dest_table = %dest_table, "starting fetch → transform → load");
+        info!("───────────────────────────────────────────────────────────");
+        info!("📋 Module: {} | Source: {} → Table: {}", name, source_name, dest_table);
+        info!("🔄 Starting ETL Pipeline...");
         let step_t0 = Instant::now();
         let stats = run_fetch(
             client,
@@ -172,20 +175,15 @@ pub async fn run_pipeline(root: &str, cfg_path: &str) -> Result<()> {
         )
         .await?;
 
-        info!(
-            record_count = stats.total_items as u64,
-            elapsed_ms = step_t0.elapsed().as_millis() as u64,
-            "module completed"
-        );
-        info!(
-            elapsed_ms = m_t0.elapsed().as_millis() as u64,
-            "module finished"
+        info!("✅ Module Completed | Records: {} | Duration: {}ms", 
+            stats.total_items, 
+            step_t0.elapsed().as_millis()
         );
     }
 
-    info!(
-        total_ms = t0.elapsed().as_millis() as u64,
-        "all modules finished"
-    );
+    info!("═══════════════════════════════════════════════════════════");
+    info!("🎉 All Pipelines Completed Successfully!");
+    info!("⏱️  Total Execution Time: {}ms", t0.elapsed().as_millis());
+    info!("═══════════════════════════════════════════════════════════");
     Ok(())
 }
