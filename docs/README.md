@@ -6,7 +6,14 @@ This directory contains comprehensive documentation for APITap performance optim
 
 ### Getting Started
 
-- **[STREAMING_ARCHITECTURE.md](STREAMING_ARCHITECTURE.md)** - **START HERE** to understand how APITap works
+- **[RUST_LEARNING_GUIDE.md](RUST_LEARNING_GUIDE.md)** - **Learning Rust? START HERE!** 🦀
+  - Complete Rust tutorial using APITap as example
+  - Ownership, borrowing, async/await explained
+  - Traits, error handling, pattern matching
+  - Reading real-world Rust code
+  - 3 practice exercises included
+
+- **[STREAMING_ARCHITECTURE.md](STREAMING_ARCHITECTURE.md)** - **Understanding the architecture**
   - Explains the factory pattern and data streaming
   - Clarifies that HTTP requests happen only once per pipeline
   - Memory buffering strategy and DataFusion integration
