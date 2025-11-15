@@ -11,6 +11,26 @@ This directory contains comprehensive documentation for APITap performance optim
   - Clarifies that HTTP requests happen only once per pipeline
   - Memory buffering strategy and DataFusion integration
 
+### Core Module Guides
+
+- **[FETCHER_GUIDE.md](FETCHER_GUIDE.md)** - HTTP data fetching module (`src/http/fetcher.rs`)
+  - Pagination strategies (limit/offset, page number, cursor)
+  - Memory management and buffering
+  - Concurrency control
+  - API reference and usage examples
+
+- **[TABLE_PROVIDER_GUIDE.md](TABLE_PROVIDER_GUIDE.md)** - DataFusion table provider (`src/utils/table_provider.rs`)
+  - How SQL queries work over streaming data
+  - Factory pattern in detail
+  - Integration with DataFusion
+  - Best practices
+
+- **[EXECUTION_GUIDE.md](EXECUTION_GUIDE.md)** - Query execution plan (`src/utils/execution.rs`)
+  - JSON to Arrow RecordBatch conversion
+  - Execution lifecycle
+  - Performance characteristics
+  - Debugging and monitoring
+
 ### Performance Optimization
 
 - **[OPTIMIZATIONS_APPLIED.md](OPTIMIZATIONS_APPLIED.md)** - Summary of all implemented optimizations
