@@ -1,6 +1,6 @@
 // tracing_setup.rs
 use tracing_error::ErrorLayer;
-use tracing_subscriber::{EnvFilter, Registry, fmt, layer::SubscriberExt};
+use tracing_subscriber::{fmt, layer::SubscriberExt, EnvFilter, Registry};
 
 /// Initialize tracing subscriber.
 ///

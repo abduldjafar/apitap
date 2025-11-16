@@ -19,7 +19,7 @@ pub struct FetchOpts {
 pub async fn run_fetch(
     client: Client,
     url: Url,
-    data_path:Option<String>,
+    data_path: Option<String>,
     pagination: &Option<Pagination>,
     sql: &str,
     dest_table: &str,
@@ -62,15 +62,18 @@ pub async fn run_fetch(
                 .with_batch_size(opts.fetch_batch_size)
                 .with_page_number(page_param, per_page_param);
 
-            let stats = fetcher.fetch_page_number(
-                50, 
-                data_path.as_deref(), 
-                None, 
-                page_writer, 
-                write_mode, 
-                config_retry).await?;
+            let stats = fetcher
+                .fetch_page_number(
+                    opts.default_page_size.try_into().unwrap(),
+                    data_path.as_deref(),
+                    None,
+                    page_writer,
+                    write_mode,
+                    config_retry,
+                )
+                .await?;
 
-           Ok(stats)
+            Ok(stats)
         }
 
         Some(Pagination::PageOnly { page_param: _ }) => {

@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use serde::{Deserialize, Deserializer, Serialize, de};
+use serde::{de, Deserialize, Deserializer, Serialize};
 use sqlx::PgPool;
 use std::collections::HashMap;
 use std::env;

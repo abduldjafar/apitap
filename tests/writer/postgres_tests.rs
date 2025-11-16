@@ -113,7 +113,7 @@ fn test_primary_key_single_columns() {
         name: "id".to_string(),
         ty: PgType::BigInt,
     };
-    
+
     let columns = pk.columns();
     assert_eq!(columns.len(), 1);
     assert_eq!(columns[0], "id");
@@ -125,7 +125,7 @@ fn test_primary_key_composite_columns() {
         ("user_id".to_string(), PgType::BigInt),
         ("tenant_id".to_string(), PgType::BigInt),
     ]);
-    
+
     let columns = pk.columns();
     assert_eq!(columns.len(), 2);
     assert_eq!(columns[0], "user_id");
@@ -139,7 +139,7 @@ fn test_primary_key_composite_empty() {
 }
 
 // ============================================================================
-// Schema Analysis Tests  
+// Schema Analysis Tests
 // ============================================================================
 
 #[test]
@@ -148,9 +148,9 @@ fn test_analyze_schema_basic_types() {
         json!({"id": 1, "name": "Alice", "active": true}),
         json!({"id": 2, "name": "Bob", "active": false}),
     ];
-    
+
     let schema = apitap::writer::postgres::PostgresWriter::analyze_schema(&rows, 10).unwrap();
-    
+
     assert_eq!(schema.len(), 3);
     assert_eq!(schema.get("id"), Some(&PgType::BigInt));
     assert_eq!(schema.get("name"), Some(&PgType::Text));
@@ -160,24 +160,19 @@ fn test_analyze_schema_basic_types() {
 #[test]
 fn test_analyze_schema_type_coercion() {
     // Mix integer and float - should coerce to Double
-    let rows = vec![
-        json!({"value": 100}),
-        json!({"value": 3.14}),
-    ];
-    
+    let rows = vec![json!({"value": 100}), json!({"value": 3.14})];
+
     let schema = apitap::writer::postgres::PostgresWriter::analyze_schema(&rows, 10).unwrap();
-    
+
     assert_eq!(schema.get("value"), Some(&PgType::Double));
 }
 
 #[test]
 fn test_analyze_schema_complex_types() {
-    let rows = vec![
-        json!({"tags": ["rust", "postgres"], "metadata": {"version": 1}}),
-    ];
-    
+    let rows = vec![json!({"tags": ["rust", "postgres"], "metadata": {"version": 1}})];
+
     let schema = apitap::writer::postgres::PostgresWriter::analyze_schema(&rows, 10).unwrap();
-    
+
     assert_eq!(schema.get("tags"), Some(&PgType::Jsonb));
     assert_eq!(schema.get("metadata"), Some(&PgType::Jsonb));
 }
@@ -188,9 +183,9 @@ fn test_analyze_schema_with_nulls() {
         json!({"id": 1, "optional": null}),
         json!({"id": 2, "optional": "value"}),
     ];
-    
+
     let schema = apitap::writer::postgres::PostgresWriter::analyze_schema(&rows, 10).unwrap();
-    
+
     // Null should be treated as Text, then merged with actual type
     assert_eq!(schema.get("optional"), Some(&PgType::Text));
 }
@@ -198,9 +193,9 @@ fn test_analyze_schema_with_nulls() {
 #[test]
 fn test_analyze_schema_empty_rows() {
     let rows: Vec<serde_json::Value> = vec![];
-    
+
     let result = apitap::writer::postgres::PostgresWriter::analyze_schema(&rows, 10);
-    
+
     // Empty rows should return empty schema
     assert!(result.is_ok());
     assert_eq!(result.unwrap().len(), 0);
@@ -209,9 +204,9 @@ fn test_analyze_schema_empty_rows() {
 #[test]
 fn test_analyze_schema_non_object() {
     let rows = vec![json!("not an object")];
-    
+
     let result = apitap::writer::postgres::PostgresWriter::analyze_schema(&rows, 10);
-    
+
     // Should return error for non-object JSON
     assert!(result.is_err());
 }
@@ -224,11 +219,11 @@ fn test_analyze_schema_respects_sample_size() {
         json!({"col1": 3}),
         json!({"col1": "text"}), // This would coerce to Text if sampled
     ];
-    
+
     // Sample only first 2 rows
     let schema = apitap::writer::postgres::PostgresWriter::analyze_schema(&rows, 2).unwrap();
     assert_eq!(schema.get("col1"), Some(&PgType::BigInt));
-    
+
     // Sample all rows
     let schema_all = apitap::writer::postgres::PostgresWriter::analyze_schema(&rows, 10).unwrap();
     assert_eq!(schema_all.get("col1"), Some(&PgType::Text)); // Coerced due to string
@@ -237,12 +232,10 @@ fn test_analyze_schema_respects_sample_size() {
 #[test]
 fn test_analyze_schema_column_order_stable() {
     // BTreeMap should maintain stable ordering
-    let rows = vec![
-        json!({"z_field": 1, "a_field": "test", "m_field": true}),
-    ];
-    
+    let rows = vec![json!({"z_field": 1, "a_field": "test", "m_field": true})];
+
     let schema = apitap::writer::postgres::PostgresWriter::analyze_schema(&rows, 10).unwrap();
-    
+
     let keys: Vec<&String> = schema.keys().collect();
     // BTreeMap sorts keys alphabetically
     assert_eq!(keys, vec!["a_field", "m_field", "z_field"]);
@@ -272,7 +265,7 @@ fn test_quote_ident_with_special_chars() {
 
 #[test]
 fn test_quote_ident_with_embedded_quotes() {
-    // Double quotes should be escaped by doubling them  
+    // Double quotes should be escaped by doubling them
     let quoted = apitap::writer::postgres::PostgresWriter::quote_ident(r#"user"name"#);
     // Input: user"name
     // Each " should become ""
@@ -319,13 +312,13 @@ fn test_quote_ident_path_with_special_chars() {
 // - A running PostgreSQL database
 // - Tokio runtime context
 // - Proper async test setup
-// 
+//
 // Integration tests for PostgresWriter should cover:
 // Those would require:
 // - Docker container with PostgreSQL
 // - Test database setup/teardown
 // - Mock database connections
-// 
+//
 // Future integration tests should cover:
 // - table_exists()
 // - create_table_from_schema()

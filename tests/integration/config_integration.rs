@@ -38,14 +38,14 @@ targets:
       username: testuser
       password: testpass
 "#;
-    
+
     let config: Config = serde_yaml::from_str(yaml).unwrap();
-    
+
     // Verify sources
     assert_eq!(config.sources.len(), 2);
     assert!(config.source("api1").is_some());
     assert!(config.source("api2").is_some());
-    
+
     // Verify targets
     assert_eq!(config.targets.len(), 1);
     assert!(config.target("pg_sink").is_some());
@@ -64,10 +64,10 @@ targets:
       username_env: DB_USER
       password_env: DB_PASS
 "#;
-    
+
     let config: Config = serde_yaml::from_str(yaml).unwrap();
     let target = config.target("pg_sink").unwrap();
-    
+
     // Verify target exists - just check it was found
     assert!(matches!(target, apitap::pipeline::Target::Postgres(_)));
 }
@@ -108,13 +108,21 @@ sources:
       min_delay_secs: 1
 targets: []
 "#;
-    
+
     let config: Config = serde_yaml::from_str(yaml).unwrap();
-    
+
     // All sources should be parseable with different pagination strategies
     assert_eq!(config.sources.len(), 3);
-    assert!(config.source("limit_offset_api").unwrap().pagination.is_some());
-    assert!(config.source("page_number_api").unwrap().pagination.is_some());
+    assert!(config
+        .source("limit_offset_api")
+        .unwrap()
+        .pagination
+        .is_some());
+    assert!(config
+        .source("page_number_api")
+        .unwrap()
+        .pagination
+        .is_some());
     assert!(config.source("cursor_api").unwrap().pagination.is_some());
 }
 
@@ -125,7 +133,7 @@ fn test_retry_configuration_validation() {
         max_delay_secs: 300,
         min_delay_secs: 1,
     };
-    
+
     // Retry configuration should be valid
     assert!(retry.max_attempts > 0);
     assert!(retry.max_delay_secs > retry.min_delay_secs);
@@ -150,15 +158,15 @@ targets:
       username: user1
       password: pass1
 "#;
-    
+
     let mut config: Config = serde_yaml::from_str(yaml).unwrap();
-    
+
     // Initial state
     assert!(config.source("api1").is_some());
-    
+
     // Reindexing should succeed
     assert!(config.reindex().is_ok());
-    
+
     // Should still be accessible after reindex
     assert!(config.source("api1").is_some());
 }
@@ -181,17 +189,17 @@ sources:
       min_delay_secs: 1
 targets: []
 "#;
-    
+
     let config: Config = serde_yaml::from_str(yaml).unwrap();
-    
+
     // Lookup by name should work
     let users = config.source("users_api").unwrap();
     assert_eq!(users.name, "users_api");
     assert_eq!(users.url, "https://api.example.com/users");
-    
+
     let posts = config.source("posts_api").unwrap();
     assert_eq!(posts.name, "posts_api");
-    
+
     // Non-existent source should return None
     assert!(config.source("nonexistent").is_none());
 }
@@ -218,9 +226,9 @@ targets:
       username: staging_user
       password: staging_pass
 "#;
-    
+
     let config: Config = serde_yaml::from_str(yaml).unwrap();
-    
+
     // Both targets should be accessible
     assert!(config.target("prod_db").is_some());
     assert!(config.target("staging_db").is_some());
@@ -239,20 +247,20 @@ targets:
 // async fn test_end_to_end_pipeline() {
 //     // Load config from file
 //     let config = Config::from_file("test_config.yaml").unwrap();
-//     
+//
 //     // Setup mock HTTP server
 //     let mock_server = setup_mock_api().await;
-//     
+//
 //     // Setup test database
 //     let test_db = setup_test_db().await;
-//     
+//
 //     // Run pipeline
 //     let result = run_pipeline(&config).await;
-//     
+//
 //     // Verify data in database
 //     let rows = test_db.query("SELECT * FROM test_table").await.unwrap();
 //     assert_eq!(rows.len(), expected_count);
-//     
+//
 //     // Cleanup
 //     teardown_test_db(test_db).await;
 // }

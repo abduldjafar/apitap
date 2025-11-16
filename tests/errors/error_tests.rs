@@ -4,7 +4,10 @@ use std::io;
 #[test]
 fn test_config_error_display() {
     let err = ApitapError::ConfigError("missing configuration".to_string());
-    assert_eq!(err.to_string(), "Configuration error: missing configuration");
+    assert_eq!(
+        err.to_string(),
+        "Configuration error: missing configuration"
+    );
 }
 
 #[test]
@@ -47,7 +50,7 @@ fn test_poison_error_display() {
 fn test_io_error_from_conversion() {
     let io_err = io::Error::new(io::ErrorKind::NotFound, "file not found");
     let apitap_err: ApitapError = io_err.into();
-    
+
     assert!(apitap_err.to_string().contains("I/O error"));
 }
 
@@ -56,7 +59,7 @@ fn test_serde_json_error_from_conversion() {
     let json_str = "{invalid json}";
     let json_err = serde_json::from_str::<serde_json::Value>(json_str).unwrap_err();
     let apitap_err: ApitapError = json_err.into();
-    
+
     assert!(apitap_err.to_string().contains("JSON serialization error"));
 }
 
@@ -84,7 +87,7 @@ fn test_error_debug_format() {
 fn test_url_parse_error_from_conversion() {
     let url_err = url::Url::parse("not a valid url").unwrap_err();
     let apitap_err: ApitapError = url_err.into();
-    
+
     assert!(apitap_err.to_string().contains("URL parse error"));
 }
 
@@ -93,22 +96,25 @@ fn test_multiple_error_types_in_chain() {
     fn do_something() -> Result<()> {
         Err(ApitapError::ConfigError("first error".to_string()))
     }
-    
+
     fn handle_error() -> Result<()> {
         do_something()?;
         Ok(())
     }
-    
+
     let result = handle_error();
     assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("Configuration error"));
+    assert!(result
+        .unwrap_err()
+        .to_string()
+        .contains("Configuration error"));
 }
 
 #[test]
 fn test_error_contains_provides_context() {
     let err = ApitapError::WriterError("Database connection timeout after 30 seconds".to_string());
     let err_str = err.to_string();
-    
+
     assert!(err_str.contains("Writer error"));
     assert!(err_str.contains("connection timeout"));
 }

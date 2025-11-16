@@ -2,23 +2,26 @@
 //
 // These tests verify the fetcher's ability to:
 // - Create pagination strategies
-// - Build proper request configurations  
+// - Build proper request configurations
 // - Handle FetchStats tracking
 //
 // Note: Full HTTP integration tests with mock servers would require
 // additional dependencies like wiremock or mockito
 
-use apitap::http::fetcher::{FetchStats, Pagination, PaginatedFetcher};
+use apitap::http::fetcher::{FetchStats, PaginatedFetcher, Pagination};
 use reqwest::Client;
 
 #[test]
 fn test_create_paginated_fetcher() {
     let client = Client::new();
     let fetcher = PaginatedFetcher::new(client, "https://api.example.com", 5);
-    
+
     // Fetcher should be created successfully
     // (Cannot directly test private fields, but creation verifies structure)
-    assert_eq!(std::mem::size_of_val(&fetcher), std::mem::size_of::<PaginatedFetcher>());
+    assert_eq!(
+        std::mem::size_of_val(&fetcher),
+        std::mem::size_of::<PaginatedFetcher>()
+    );
 }
 
 #[test]
@@ -26,9 +29,12 @@ fn test_configure_limit_offset_pagination() {
     let client = Client::new();
     let fetcher = PaginatedFetcher::new(client, "https://api.example.com", 5)
         .with_limit_offset("limit", "offset");
-    
+
     // Configuration should be set (verified by successful creation)
-    assert_eq!(std::mem::size_of_val(&fetcher), std::mem::size_of::<PaginatedFetcher>());
+    assert_eq!(
+        std::mem::size_of_val(&fetcher),
+        std::mem::size_of::<PaginatedFetcher>()
+    );
 }
 
 #[test]
@@ -36,34 +42,39 @@ fn test_configure_page_number_pagination() {
     let client = Client::new();
     let fetcher = PaginatedFetcher::new(client, "https://api.example.com", 10)
         .with_page_number("page", "per_page");
-    
+
     // Configuration should be set
-    assert_eq!(std::mem::size_of_val(&fetcher), std::mem::size_of::<PaginatedFetcher>());
+    assert_eq!(
+        std::mem::size_of_val(&fetcher),
+        std::mem::size_of::<PaginatedFetcher>()
+    );
 }
 
 #[test]
 fn test_configure_batch_size() {
     let client = Client::new();
-    let fetcher = PaginatedFetcher::new(client, "https://api.example.com", 5)
-        .with_batch_size(100);
-    
+    let fetcher = PaginatedFetcher::new(client, "https://api.example.com", 5).with_batch_size(100);
+
     // Batch size configuration should be applied
-    assert_eq!(std::mem::size_of_val(&fetcher), std::mem::size_of::<PaginatedFetcher>());
+    assert_eq!(
+        std::mem::size_of_val(&fetcher),
+        std::mem::size_of::<PaginatedFetcher>()
+    );
 }
 
 #[test]
 fn test_fetch_stats_tracking() {
     let mut stats = FetchStats::new();
-    
+
     // Verify initial state
     assert_eq!(stats.success_count, 0);
     assert_eq!(stats.error_count, 0);
     assert_eq!(stats.total_items, 0);
-    
+
     // Stats should be mutable for tracking
     stats.success_count += 1;
     stats.total_items += 50;
-    
+
     assert_eq!(stats.success_count, 1);
     assert_eq!(stats.total_items, 50);
 }
@@ -75,17 +86,17 @@ fn test_pagination_strategy_configuration() {
         limit_param: "limit".to_string(),
         offset_param: "offset".to_string(),
     };
-    
+
     let page_number = Pagination::PageNumber {
         page_param: "page".to_string(),
         per_page_param: "size".to_string(),
     };
-    
+
     let cursor = Pagination::Cursor {
         cursor_param: "next_cursor".to_string(),
         page_size_param: Some("page_size".to_string()),
     };
-    
+
     // All strategies should be configurable
     assert!(matches!(limit_offset, Pagination::LimitOffset { .. }));
     assert!(matches!(page_number, Pagination::PageNumber { .. }));
@@ -96,15 +107,11 @@ fn test_pagination_strategy_configuration() {
 fn test_concurrent_fetcher_creation() {
     // Test that multiple fetchers can be created for concurrent requests
     let client = Client::new();
-    
+
     let fetchers: Vec<PaginatedFetcher> = (0..5)
-        .map(|i| PaginatedFetcher::new(
-            client.clone(),
-            format!("https://api{}.example.com", i),
-            10
-        ))
+        .map(|i| PaginatedFetcher::new(client.clone(), format!("https://api{}.example.com", i), 10))
         .collect();
-    
+
     assert_eq!(fetchers.len(), 5);
 }
 

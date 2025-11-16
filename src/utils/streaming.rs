@@ -1,8 +1,5 @@
 use crate::errors::Result;
-use datafusion::arrow::{
-    array::RecordBatch,
-    datatypes::Schema,
-};
+use datafusion::arrow::{array::RecordBatch, datatypes::Schema};
 use futures::Stream;
 use serde_json::Value;
 use std::pin::Pin;
