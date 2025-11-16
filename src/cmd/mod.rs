@@ -124,7 +124,14 @@ pub async fn run_pipeline(root: &str, cfg_path: &str) -> Result<()> {
         };
 
         // HTTP client
-        let http = Http::new(src.url.clone());
+        let  mut http = Http::new(src.url.clone());
+
+        if let Some(header_from_cfg) = src.headers.clone(){
+            for header in header_from_cfg {
+               http =  http.header(header.key, header.value);
+            }
+        }
+        
         let client = http.build_client();
         let url_s = http.get_url();
         let url = reqwest::Url::parse(&url_s)?;
@@ -164,6 +171,7 @@ pub async fn run_pipeline(root: &str, cfg_path: &str) -> Result<()> {
         let stats = run_fetch(
             client,
             url,
+            src.data_path.clone(),
             &src.pagination,
             &sql,
             dest_table,

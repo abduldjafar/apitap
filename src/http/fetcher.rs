@@ -314,7 +314,7 @@ impl PaginatedFetcher {
     pub async fn fetch_limit_offset(
         &self,
         limit: u64,
-        data_path: Option<&str>,
+        data_path: Option<String>,
         _total_hint: Option<TotalHint>,
         writer: Arc<dyn PageWriter>,
         write_mode: WriteMode,
@@ -327,7 +327,7 @@ impl PaginatedFetcher {
 
         // Build a single JsonStreamType over all pages
         let json_stream = self
-            .limit_offset_stream(limit, data_path, config_retry)
+            .limit_offset_stream(limit, data_path.as_deref(), config_retry)
             .await?;
 
         // Now you can wrap it into your QueryResultStream abstraction

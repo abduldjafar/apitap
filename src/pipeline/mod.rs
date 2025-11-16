@@ -36,8 +36,17 @@ pub struct Source {
     #[serde(default)]
     pub table_destination_name: Option<String>,
     #[serde(default)]
+    pub headers: Option<Vec<Header>>,
+    #[serde(default)]
     pub pagination: Option<Pagination>,
+    pub data_path: Option<String>,
     pub retry: Retry,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct Header {
+    pub key: String,
+    pub value: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
