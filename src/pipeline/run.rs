@@ -31,7 +31,7 @@ pub async fn run_fetch(
     config_retry: &crate::pipeline::Retry,
 ) -> Result<FetchStats> {
     let page_writer = Arc::new(DataFusionPageWriter::new(dest_table, sql, writer.clone()));
-    
+
     // Convert QueryParam to (String, String) tuples
     let extra_params_vec: Vec<(String, String)> = extra_params
         .unwrap_or_default()

@@ -281,7 +281,7 @@ impl PaginatedFetcher {
                 let mut query_params = extra_params_owned.clone();
                 query_params.push((limit_param.clone(), limit.to_string()));
                 query_params.push((offset_param.clone(), offset.to_string()));
-                
+
                 let mut page_stream: BoxStream<'static, crate::errors::Result<Value>> =
                     ndjson_stream_qs(
                         &client,
@@ -326,7 +326,7 @@ impl PaginatedFetcher {
 
         let mut stats = FetchStats::new();
 
-        // Build a single JsonStreamType over all pages  
+        // Build a single JsonStreamType over all pages
         let json_stream = self
             .limit_offset_stream(limit, data_path.as_deref(), extra_params, config_retry)
             .await?;

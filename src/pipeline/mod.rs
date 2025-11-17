@@ -43,7 +43,7 @@ pub struct Source {
     pub pagination: Option<Pagination>,
     pub data_path: Option<String>,
     pub retry: Retry,
-    pub primary_key_in_dest:Option<String>
+    pub primary_key_in_dest: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
