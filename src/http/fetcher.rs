@@ -251,6 +251,7 @@ impl PaginatedFetcher {
         &self,
         limit: u64,
         data_path: Option<&str>,
+        extra_params: Option<&[(String, String)]>,
         config_retry: &crate::pipeline::Retry,
     ) -> crate::errors::Result<JsonStreamType> {
         let (limit_param, offset_param) = match &self.pagination_config {
@@ -267,25 +268,25 @@ impl PaginatedFetcher {
 
         let client = self.client.clone();
         let base_url = self.base_url.clone();
-        let limit_param_c = limit_param.clone();
-        let offset_param_c = offset_param.clone();
         let data_path_owned = data_path.map(|s| s.to_string());
         let retry_cfg = config_retry.clone();
+        let extra_params_owned = extra_params.map(|p| p.to_vec()).unwrap_or_default();
 
-        // You can still use total_hint if you want a known upper bound,
-        // but for simplicity, we just "loop until empty page".
+        // Build the stream
         let s = async_stream::try_stream! {
             let mut offset: u64 = 0;
 
             loop {
+                // Merge pagination params with extra params
+                let mut query_params = extra_params_owned.clone();
+                query_params.push((limit_param.clone(), limit.to_string()));
+                query_params.push((offset_param.clone(), offset.to_string()));
+                
                 let mut page_stream: BoxStream<'static, crate::errors::Result<Value>> =
                     ndjson_stream_qs(
                         &client,
                         &base_url,
-                        &[
-                            (limit_param_c.clone(), limit.to_string()),
-                            (offset_param_c.clone(), offset.to_string()),
-                        ],
+                        &query_params,
                         data_path_owned.as_deref(),
                         &retry_cfg,
                     ).await?;
@@ -293,13 +294,12 @@ impl PaginatedFetcher {
                 let mut page_count = 0usize;
 
                 while let Some(item) = page_stream.next().await {
-                    let v = item?; // propagate ApitapError on HTTP/JSON error
+                    let v = item?;
                     page_count += 1;
                     yield v;
                 }
 
                 if page_count == 0 {
-                    // No more data, stop paginating
                     break;
                 }
 
@@ -315,6 +315,7 @@ impl PaginatedFetcher {
         &self,
         limit: u64,
         data_path: Option<String>,
+        extra_params: Option<&[(String, String)]>,
         _total_hint: Option<TotalHint>,
         writer: Arc<dyn PageWriter>,
         write_mode: WriteMode,
@@ -325,9 +326,9 @@ impl PaginatedFetcher {
 
         let mut stats = FetchStats::new();
 
-        // Build a single JsonStreamType over all pages
+        // Build a single JsonStreamType over all pages  
         let json_stream = self
-            .limit_offset_stream(limit, data_path.as_deref(), config_retry)
+            .limit_offset_stream(limit, data_path.as_deref(), extra_params, config_retry)
             .await?;
 
         // Now you can wrap it into your QueryResultStream abstraction

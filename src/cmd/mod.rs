@@ -148,7 +148,7 @@ pub async fn run_pipeline(root: &str, cfg_path: &str) -> Result<()> {
         // Target writer via factory
         let writer_opts = WriterOpts {
             dest_table,
-            primary_key: Some("id".to_string()),
+            primary_key: src.primary_key_in_dest.clone(),
             batch_size: 50,
             sample_size: 10,
             auto_create: true,
@@ -175,6 +175,7 @@ pub async fn run_pipeline(root: &str, cfg_path: &str) -> Result<()> {
             client,
             url,
             src.data_path.clone(),
+            src.query_params.clone(),
             &src.pagination,
             &sql,
             dest_table,

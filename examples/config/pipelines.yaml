@@ -1,23 +1,40 @@
 sources:
-  - name: json_place_holder
-    url: https://jsonplaceholder.typicode.com/posts
-    table_destination_name: posts
+  - name: peopleforce_employees
+    url: https://peopleforce.io/api/public/v2/employees?status=active
+    table_destination_name: peopleforce_employees
+    primary_key_in_dest: id
+    data_path: /data
+    headers:
+      - key: X-API-KEY
+        value: xxxxxxxxxxxxxxxxxx
+      - key: Content-Type
+        value: application/json
     pagination:
-      kind: limit_offset
-      limit_param: _limit
-      offset_param: _start
+      kind: page_number
+      page_param: page
+      per_page_param: per_page
     retry:
       max_attempts: 3
       max_delay_secs: 5
       min_delay_secs: 1
-  
-  - name: json_place_holder2
-    url: https://jsonplaceholder.typicode.com/posts
-    table_destination_name: posts_2
+
+  - name: confluence_content
+    url: https://confluence.com/rest/api/search
+    table_destination_name: confluence_content
+    primary_key_in_dest: id
+    data_path: /results
+    headers:
+      - key: Authorization
+        value: Bearer xxxxxxxxxxxxxxxxxx
+      - key: Content-Type
+        value: application/json
+    query_params:
+      - key: cql
+        value: lastModified>='2025-11-14' AND lastModified<='2025-11-14' AND type IN (page, blogpost, comment, attachment)
     pagination:
       kind: limit_offset
-      limit_param: _limit
-      offset_param: _start
+      limit_param: limit
+      offset_param: start
     retry:
       max_attempts: 3
       max_delay_secs: 5

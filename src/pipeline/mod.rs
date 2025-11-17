@@ -38,13 +38,22 @@ pub struct Source {
     #[serde(default)]
     pub headers: Option<Vec<Header>>,
     #[serde(default)]
+    pub query_params: Option<Vec<QueryParam>>,
+    #[serde(default)]
     pub pagination: Option<Pagination>,
     pub data_path: Option<String>,
     pub retry: Retry,
+    pub primary_key_in_dest:Option<String>
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Header {
+    pub key: String,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct QueryParam {
     pub key: String,
     pub value: String,
 }
