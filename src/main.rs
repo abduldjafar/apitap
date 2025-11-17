@@ -1,4 +1,7 @@
-use apitap::{cmd::{run_pipeline, Cli}, log};
+use apitap::{
+    cmd::{run_pipeline, Cli},
+    log,
+};
 use clap::Parser;
 use dotenvy::dotenv;
 use std::process::ExitCode;

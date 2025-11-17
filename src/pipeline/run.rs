@@ -76,6 +76,7 @@ pub async fn run_fetch(
                 .fetch_page_number(
                     opts.default_page_size.try_into().unwrap(),
                     data_path.as_deref(),
+                    Some(&extra_params_vec),
                     None,
                     page_writer,
                     write_mode,

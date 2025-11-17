@@ -15,11 +15,9 @@ use reqwest::header::CONTENT_TYPE;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::VecDeque;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use tokio_util::{
     codec::{FramedRead, LinesCodec},
     io::StreamReader,
@@ -346,6 +344,7 @@ impl PaginatedFetcher {
         &self,
         per_page: u64,
         data_path: Option<&str>,
+        extra_params: Option<&[(String, String)]>,
         total_hint: Option<TotalHint>,
         writer: Arc<dyn PageWriter>,
         write_mode: WriteMode,
@@ -650,84 +649,34 @@ impl PageWriter for DataFusionPageWriter {
         _write_mode: WriteMode,
     ) -> Result<()> {
         debug!("starting streaming pipeline");
-        let ctx = get_shared_context().await;
 
-        // Single-producer, single-consumer channel with increased buffer for better throughput
-        let (tx, mut rx) = tokio::sync::mpsc::channel::<Result<serde_json::Value>>(8192);
+        // Buffer the entire stream to ensure the stream factory is replayable.
+        let all_items: Vec<serde_json::Value> = json_stream.try_collect().await?;
 
-        // Move the ONLY sender into the task so the channel closes when done.
-        let _stream_task = tokio::spawn(async move {
-            let mut pinned = json_stream;
-            while let Some(item) = pinned.next().await {
-                // If the receiver is gone, stop.
-                if tx.send(item).await.is_err() {
-                    break;
-                }
-            }
-            // tx dropped here -> rx will eventually return None
-        });
-
-        // --------- Sample for schema (and keep the samples) ---------
-        let mut samples: Vec<serde_json::Value> = Vec::new();
-
-        while samples.len() < 100 {
-            match rx.recv().await {
-                Some(Ok(v)) => samples.push(v),
-                Some(Err(e)) => {
-                    // propagate upstream error
-                    return Err(e);
-                }
-                None => break, // producer finished
-            }
-        }
-
-        if samples.is_empty() {
+        if all_items.is_empty() {
             info!("Stream empty. Exit");
             return Ok(());
         }
 
-        let arrow_schema = infer_schema_from_values(&samples)?;
+        let arrow_schema = infer_schema_from_values(&all_items)?;
         debug!(
             fields = arrow_schema.fields().len(),
             field_names = ?arrow_schema.fields().iter().map(|f| f.name().as_str()).collect::<Vec<_>>(),
             "inferred schema"
         );
 
-        // Put samples in a shared queue so the provider's stream can emit them first.
-        let prefix = Arc::new(Mutex::new(VecDeque::from(samples)));
+        let items_arc = Arc::new(all_items);
 
-        // Wrap remaining receiver so provider can pull from it.
-        let rx_arc = Arc::new(Mutex::new(rx));
-
-        // Stream factory: drain `prefix` first, then read from mpsc::Receiver.
+        // This factory is replayable because it clones the buffered data for each new stream.
         let stream_factory = {
-            let prefix = Arc::clone(&prefix);
-            let rx_arc = Arc::clone(&rx_arc);
+            let items_arc = Arc::clone(&items_arc);
             move || {
-                let prefix = Arc::clone(&prefix);
-                let rx_arc = Arc::clone(&rx_arc);
-                async_stream::stream! {
-                    loop {
-                        // 1) yield buffered samples first
-                        if let Some(v) = { prefix.lock().await.pop_front() } {
-                            yield Ok(v);
-                            continue;
-                        }
-
-                        // 2) then read from the channel
-                        let mut r = rx_arc.lock().await;
-                        match r.recv().await {
-                            Some(item) => {
-                                drop(r); // release lock before yield
-                                yield item;
-                            }
-                            None => break, // channel closed: end of stream
-                        }
-                    }
-                }
-                .boxed()
+                let data = items_arc.as_ref().clone();
+                futures::stream::iter(data.into_iter().map(Ok)).boxed()
             }
         };
+
+        let ctx = get_shared_context().await;
 
         // Create table provider with schema
         let table_provider = JsonStreamTableProvider::new(Arc::new(stream_factory), arrow_schema);
