@@ -6,8 +6,8 @@ use datafusion::{
     execution::{SendableRecordBatchStream, TaskContext},
     physical_expr::EquivalenceProperties,
     physical_plan::{
-        DisplayAs, DisplayFormatType, ExecutionPlan, Partitioning, PlanProperties,
-        stream::RecordBatchStreamAdapter,
+        stream::RecordBatchStreamAdapter, DisplayAs, DisplayFormatType, ExecutionPlan,
+        Partitioning, PlanProperties,
     },
 };
 #[allow(unused_imports)]
@@ -41,7 +41,11 @@ impl std::fmt::Debug for Exec {
 }
 
 impl Exec {
-    pub fn new<F>(schema: SchemaRef, projections: Option<&Vec<usize>>, stream_factory: F) -> datafusion::error::Result<Self>
+    pub fn new<F>(
+        schema: SchemaRef,
+        projections: Option<&Vec<usize>>,
+        stream_factory: F,
+    ) -> datafusion::error::Result<Self>
     where
         F: Fn() -> Pin<Box<dyn Stream<Item = errors::Result<Value>> + Send>>
             + Send

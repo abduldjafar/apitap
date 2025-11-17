@@ -3,4 +3,4 @@
 
 select 
     * 
-from {{ use_source("json_place_holder") }};
+from {{ use_source("peopleforce_employees") }};

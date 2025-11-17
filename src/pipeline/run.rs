@@ -3,6 +3,7 @@ use std::sync::Arc;
 use url::Url;
 
 use crate::http::fetcher::FetchStats;
+use crate::pipeline::QueryParam;
 use crate::{
     errors::{ApitapError, Result},
     http::fetcher::{DataFusionPageWriter, PaginatedFetcher, Pagination},
@@ -19,6 +20,8 @@ pub struct FetchOpts {
 pub async fn run_fetch(
     client: Client,
     url: Url,
+    data_path: Option<String>,
+    extra_params: Option<Vec<QueryParam>>,
     pagination: &Option<Pagination>,
     sql: &str,
     dest_table: &str,
@@ -27,7 +30,14 @@ pub async fn run_fetch(
     opts: &FetchOpts,
     config_retry: &crate::pipeline::Retry,
 ) -> Result<FetchStats> {
-    let page_writer = Arc::new(DataFusionPageWriter::new(dest_table, sql, writer));
+    let page_writer = Arc::new(DataFusionPageWriter::new(dest_table, sql, writer.clone()));
+
+    // Convert QueryParam to (String, String) tuples
+    let extra_params_vec: Vec<(String, String)> = extra_params
+        .unwrap_or_default()
+        .into_iter()
+        .map(|q| (q.key, q.value))
+        .collect();
 
     match pagination {
         Some(Pagination::LimitOffset {
@@ -41,7 +51,8 @@ pub async fn run_fetch(
             let stats = fetcher
                 .fetch_limit_offset(
                     opts.default_page_size.try_into().unwrap(),
-                    None,
+                    data_path,
+                    Some(&extra_params_vec),
                     None,
                     page_writer,
                     write_mode,
@@ -52,12 +63,27 @@ pub async fn run_fetch(
         }
 
         Some(Pagination::PageNumber {
-            page_param: _,
-            per_page_param: _,
+            page_param,
+            per_page_param,
         }) => {
-            let _fetcher = PaginatedFetcher::new(client, url, opts.concurrency)
-                .with_batch_size(opts.fetch_batch_size);
-            return Ok(FetchStats::new());
+            let page_writer = Arc::new(DataFusionPageWriter::new(dest_table, sql, writer.clone()));
+
+            let fetcher = PaginatedFetcher::new(client, url, opts.concurrency)
+                .with_batch_size(opts.fetch_batch_size)
+                .with_page_number(page_param, per_page_param);
+
+            let stats = fetcher
+                .fetch_page_number(
+                    opts.default_page_size.try_into().unwrap(),
+                    data_path.as_deref(),
+                    None,
+                    page_writer,
+                    write_mode,
+                    config_retry,
+                )
+                .await?;
+
+            Ok(stats)
         }
 
         Some(Pagination::PageOnly { page_param: _ }) => {

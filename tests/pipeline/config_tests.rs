@@ -1,5 +1,5 @@
-use apitap::pipeline::{Config, PostgresAuth, Retry, Source, Target};
 use apitap::http::fetcher::Pagination;
+use apitap::pipeline::{Config, PostgresAuth, Retry, Source, Target};
 
 #[test]
 fn test_config_source_indexing() {
@@ -31,14 +31,14 @@ targets:
       password: testpass
 "#
     );
-    
+
     let config: Config = serde_yaml::from_str(&config_yaml).unwrap();
-    
+
     // Test source retrieval by name
     assert!(config.source("api1").is_some());
     assert!(config.source("api2").is_some());
     assert!(config.source("nonexistent").is_none());
-    
+
     let retrieved = config.source("api1").unwrap();
     assert_eq!(retrieved.name, "api1");
     assert_eq!(retrieved.url, "https://api.example.com/users");
@@ -58,13 +58,13 @@ targets:
       username: testuser
       password: testpass
 "#;
-    
+
     let config: Config = serde_yaml::from_str(config_yaml).unwrap();
-    
+
     // Test target retrieval
     assert!(config.target("pg_sink").is_some());
     assert!(config.target("nonexistent").is_none());
-    
+
     let target = config.target("pg_sink").unwrap();
     match target {
         Target::Postgres(pg) => {
@@ -94,7 +94,7 @@ sources:
       min_delay_secs: 1
 targets: []
 "#;
-    
+
     let result: Result<Config, _> = serde_yaml::from_str(config_yaml);
     assert!(result.is_err());
 }
@@ -119,7 +119,7 @@ targets:
       username: user2
       password: pass2
 "#;
-    
+
     let result: Result<Config, _> = serde_yaml::from_str(config_yaml);
     assert!(result.is_err());
 }
@@ -132,7 +132,7 @@ fn test_postgres_auth_inline_credentials() {
         username_env: None,
         password_env: None,
     };
-    
+
     assert!(auth.username.is_some());
     assert!(auth.password.is_some());
     assert!(auth.username_env.is_none());
@@ -147,7 +147,7 @@ fn test_postgres_auth_env_credentials() {
         username_env: Some("DB_USER".to_string()),
         password_env: Some("DB_PASS".to_string()),
     };
-    
+
     assert!(auth.username.is_none());
     assert!(auth.password.is_none());
     assert!(auth.username_env.is_some());
@@ -167,10 +167,10 @@ targets:
       username: testuser
       password: testpass
 "#;
-    
+
     let config: Config = serde_yaml::from_str(config_yaml).unwrap();
     let target = config.target("pg_sink").unwrap();
-    
+
     match target {
         Target::Postgres(pg) => {
             assert_eq!(pg.port, 5432); // default port
@@ -192,10 +192,10 @@ targets:
       username: testuser
       password: testpass
 "#;
-    
+
     let config: Config = serde_yaml::from_str(config_yaml).unwrap();
     let target = config.target("pg_sink").unwrap();
-    
+
     match target {
         Target::Postgres(pg) => {
             assert_eq!(pg.port, 5433);
@@ -210,7 +210,7 @@ fn test_retry_configuration() {
         max_delay_secs: 120,
         min_delay_secs: 2,
     };
-    
+
     assert_eq!(retry.max_attempts, 5);
     assert_eq!(retry.max_delay_secs, 120);
     assert_eq!(retry.min_delay_secs, 2);
@@ -232,13 +232,16 @@ sources:
       min_delay_secs: 1
 targets: []
 "#;
-    
+
     let config: Config = serde_yaml::from_str(config_yaml).unwrap();
     let source = config.source("api_with_pagination").unwrap();
-    
+
     assert!(source.pagination.is_some());
     match source.pagination.as_ref().unwrap() {
-        Pagination::LimitOffset { limit_param, offset_param } => {
+        Pagination::LimitOffset {
+            limit_param,
+            offset_param,
+        } => {
             assert_eq!(limit_param, "limit");
             assert_eq!(offset_param, "offset");
         }
@@ -258,10 +261,10 @@ sources:
       min_delay_secs: 1
 targets: []
 "#;
-    
+
     let config: Config = serde_yaml::from_str(config_yaml).unwrap();
     let source = config.source("simple_api").unwrap();
-    
+
     assert!(source.pagination.is_none());
 }
 
@@ -278,11 +281,14 @@ sources:
       min_delay_secs: 1
 targets: []
 "#;
-    
+
     let config: Config = serde_yaml::from_str(config_yaml).unwrap();
     let source = config.source("api1").unwrap();
-    
-    assert_eq!(source.table_destination_name, Some("custom_table".to_string()));
+
+    assert_eq!(
+        source.table_destination_name,
+        Some("custom_table".to_string())
+    );
 }
 
 #[test]
@@ -301,12 +307,15 @@ sources:
       min_delay_secs: 1
 targets: []
 "#;
-    
+
     let config: Config = serde_yaml::from_str(config_yaml).unwrap();
     let source = config.source("api1").unwrap();
-    
+
     match source.pagination.as_ref().unwrap() {
-        Pagination::PageNumber { page_param, per_page_param } => {
+        Pagination::PageNumber {
+            page_param,
+            per_page_param,
+        } => {
             assert_eq!(page_param, "page");
             assert_eq!(per_page_param, "per_page");
         }
@@ -330,12 +339,15 @@ sources:
       min_delay_secs: 1
 targets: []
 "#;
-    
+
     let config: Config = serde_yaml::from_str(config_yaml).unwrap();
     let source = config.source("api1").unwrap();
-    
+
     match source.pagination.as_ref().unwrap() {
-        Pagination::Cursor { cursor_param, page_size_param } => {
+        Pagination::Cursor {
+            cursor_param,
+            page_size_param,
+        } => {
             assert_eq!(cursor_param, "cursor");
             assert_eq!(page_size_param, &Some("size".to_string()));
         }
@@ -363,15 +375,15 @@ targets:
       username: testuser
       password: testpass
 "#;
-    
+
     let config: Config = serde_yaml::from_str(config_yaml).unwrap();
-    
+
     // Serialize back to YAML
     let serialized = serde_yaml::to_string(&config).unwrap();
-    
+
     // Deserialize again
     let config2: Config = serde_yaml::from_str(&serialized).unwrap();
-    
+
     assert_eq!(config.sources.len(), config2.sources.len());
     assert_eq!(config.targets.len(), config2.targets.len());
 }

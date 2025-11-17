@@ -7,5 +7,5 @@
 // - Data transformation workflows
 
 mod config_integration;
-mod fetcher_integration;
 mod datafusion_integration;
+mod fetcher_integration;

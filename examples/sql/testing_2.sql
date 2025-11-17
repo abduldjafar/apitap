@@ -1,9 +1,12 @@
 {{ sink(name="postgres_sink") }}
 
-
-select 
-    "userId" as id,
-    count(1) as cnt
-from {{ use_source("json_place_holder2") }}
-group by 1
-order by 2
+SELECT 
+    t.content['id'] as id,
+    t.content['type'] as content_type,
+    t.content['status'] as content_status,
+    t.content['title'] as content_title,
+    t.content['restrictions'] as content_restrictions,
+    t.content['_links'] as content_links,
+    t.content['_links']['webui'] as content_webui,
+    t.content['_links']['self'] as content_self
+FROM {{ use_source("confluence_content") }} AS t;

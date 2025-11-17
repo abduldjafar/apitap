@@ -3,7 +3,7 @@ use reqwest::{Client, Request, Response};
 use reqwest_middleware::{
     ClientBuilder, ClientWithMiddleware, Middleware, Next, Result as MwResult,
 };
-use reqwest_retry::{RetryTransientMiddleware, policies::ExponentialBackoff};
+use reqwest_retry::{policies::ExponentialBackoff, RetryTransientMiddleware};
 use std::time::{Duration, Instant};
 use tracing::warn;
 

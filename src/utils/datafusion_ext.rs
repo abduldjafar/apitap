@@ -9,7 +9,7 @@ use datafusion::{
     execution::{context::SessionConfig, memory_pool::GreedyMemoryPool},
     prelude::*,
 };
-use futures::{Stream, StreamExt, stream};
+use futures::{stream, Stream, StreamExt};
 use serde_arrow::schema::{SchemaLike, TracingOptions};
 use std::{pin::Pin, sync::Arc};
 use tokio::sync::OnceCell;

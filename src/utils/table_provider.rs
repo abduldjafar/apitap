@@ -16,8 +16,7 @@ pub struct JsonStreamTableProvider {
 }
 
 impl JsonStreamTableProvider {
-    pub fn new(stream_factory: JsonStreamFactory, schema: SchemaRef) -> Self
-    {
+    pub fn new(stream_factory: JsonStreamFactory, schema: SchemaRef) -> Self {
         Self {
             stream_factory,
             schema,

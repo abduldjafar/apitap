@@ -5,7 +5,7 @@ use crate::utils::datafusion_ext::{QueryResult, QueryResultStream};
 use crate::writer::{DataWriter, WriteMode};
 use async_trait::async_trait;
 use serde_json::Value;
-use sqlx::{PgPool, types::Json};
+use sqlx::{types::Json, PgPool};
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 use tokio_stream::StreamExt;

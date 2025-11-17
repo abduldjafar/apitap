@@ -1,6 +1,6 @@
 use crate::errors::{ApitapError, Result};
 use crate::utils::datafusion_ext::{
-    DataFrameExt, JsonStreamType, JsonValueExt, QueryResultStream, get_shared_context,
+    get_shared_context, DataFrameExt, JsonStreamType, JsonValueExt, QueryResultStream,
 };
 use crate::utils::schema::infer_schema_from_values;
 use crate::utils::table_provider::JsonStreamTableProvider;
@@ -9,17 +9,17 @@ use crate::writer::{DataWriter, WriteMode};
 use async_trait::async_trait;
 use datafusion::arrow;
 use datafusion::arrow::datatypes::SchemaRef;
-use futures::Stream;
 use futures::stream::{self, BoxStream, StreamExt, TryStreamExt};
-use reqwest::Client;
+use futures::Stream;
 use reqwest::header::CONTENT_TYPE;
+use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tokio::sync::Mutex;
 use std::collections::VecDeque;
 use std::pin::Pin;
-use std::sync::{Arc};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 use tokio_util::{
     codec::{FramedRead, LinesCodec},
     io::StreamReader,
@@ -251,6 +251,7 @@ impl PaginatedFetcher {
         &self,
         limit: u64,
         data_path: Option<&str>,
+        extra_params: Option<&[(String, String)]>,
         config_retry: &crate::pipeline::Retry,
     ) -> crate::errors::Result<JsonStreamType> {
         let (limit_param, offset_param) = match &self.pagination_config {
@@ -267,25 +268,25 @@ impl PaginatedFetcher {
 
         let client = self.client.clone();
         let base_url = self.base_url.clone();
-        let limit_param_c = limit_param.clone();
-        let offset_param_c = offset_param.clone();
         let data_path_owned = data_path.map(|s| s.to_string());
         let retry_cfg = config_retry.clone();
+        let extra_params_owned = extra_params.map(|p| p.to_vec()).unwrap_or_default();
 
-        // You can still use total_hint if you want a known upper bound,
-        // but for simplicity, we just "loop until empty page".
+        // Build the stream
         let s = async_stream::try_stream! {
             let mut offset: u64 = 0;
 
             loop {
+                // Merge pagination params with extra params
+                let mut query_params = extra_params_owned.clone();
+                query_params.push((limit_param.clone(), limit.to_string()));
+                query_params.push((offset_param.clone(), offset.to_string()));
+
                 let mut page_stream: BoxStream<'static, crate::errors::Result<Value>> =
                     ndjson_stream_qs(
                         &client,
                         &base_url,
-                        &[
-                            (limit_param_c.clone(), limit.to_string()),
-                            (offset_param_c.clone(), offset.to_string()),
-                        ],
+                        &query_params,
                         data_path_owned.as_deref(),
                         &retry_cfg,
                     ).await?;
@@ -293,13 +294,12 @@ impl PaginatedFetcher {
                 let mut page_count = 0usize;
 
                 while let Some(item) = page_stream.next().await {
-                    let v = item?; // propagate ApitapError on HTTP/JSON error
+                    let v = item?;
                     page_count += 1;
                     yield v;
                 }
 
                 if page_count == 0 {
-                    // No more data, stop paginating
                     break;
                 }
 
@@ -314,7 +314,8 @@ impl PaginatedFetcher {
     pub async fn fetch_limit_offset(
         &self,
         limit: u64,
-        data_path: Option<&str>,
+        data_path: Option<String>,
+        extra_params: Option<&[(String, String)]>,
         _total_hint: Option<TotalHint>,
         writer: Arc<dyn PageWriter>,
         write_mode: WriteMode,
@@ -327,7 +328,7 @@ impl PaginatedFetcher {
 
         // Build a single JsonStreamType over all pages
         let json_stream = self
-            .limit_offset_stream(limit, data_path, config_retry)
+            .limit_offset_stream(limit, data_path.as_deref(), extra_params, config_retry)
             .await?;
 
         // Now you can wrap it into your QueryResultStream abstraction
@@ -546,16 +547,18 @@ impl PaginatedFetcher {
         // Use atomic counter instead of Mutex for better performance
         let count = Arc::new(AtomicUsize::new(0));
         let count_clone = Arc::clone(&count);
-        
+
         let counted_stream = s.map(move |result| {
             if result.is_ok() {
                 count_clone.fetch_add(1, Ordering::Relaxed);
             }
             result
         });
-        
-        writer.write_page_stream(Box::pin(counted_stream), write_mode).await?;
-        
+
+        writer
+            .write_page_stream(Box::pin(counted_stream), write_mode)
+            .await?;
+
         // Get final count
         let final_count = count.load(Ordering::Relaxed);
         stats.add_page(_page, final_count);
@@ -641,136 +644,136 @@ impl PageWriter for DataFusionPageWriter {
         Ok(())
     }
 
-async fn write_page_stream(
-    &self,
-    json_stream: Pin<Box<dyn Stream<Item = Result<serde_json::Value>> + Send>>,
-    _write_mode: WriteMode,
-) -> Result<()> {
-    debug!("starting streaming pipeline");
-    let ctx = get_shared_context().await;
+    async fn write_page_stream(
+        &self,
+        json_stream: Pin<Box<dyn Stream<Item = Result<serde_json::Value>> + Send>>,
+        _write_mode: WriteMode,
+    ) -> Result<()> {
+        debug!("starting streaming pipeline");
+        let ctx = get_shared_context().await;
 
-    // Single-producer, single-consumer channel with increased buffer for better throughput
-    let (tx, mut rx) = tokio::sync::mpsc::channel::<Result<serde_json::Value>>(8192);
+        // Single-producer, single-consumer channel with increased buffer for better throughput
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<Result<serde_json::Value>>(8192);
 
-    // Move the ONLY sender into the task so the channel closes when done.
-    let _stream_task = tokio::spawn(async move {
-        let mut pinned = json_stream;
-        while let Some(item) = pinned.next().await {
-            // If the receiver is gone, stop.
-            if tx.send(item).await.is_err() {
-                break;
-            }
-        }
-        // tx dropped here -> rx will eventually return None
-    });
-
-    // --------- Sample for schema (and keep the samples) ---------
-    let mut samples: Vec<serde_json::Value> = Vec::new();
-
-    while samples.len() < 100 {
-        match rx.recv().await {
-            Some(Ok(v)) => samples.push(v),
-            Some(Err(e)) => {
-                // propagate upstream error
-                return Err(e);
-            }
-            None => break, // producer finished
-        }
-    }
-
-    if samples.is_empty() {
-        return Err(ApitapError::PipelineError("Empty stream".into()));
-    }
-
-    let arrow_schema = infer_schema_from_values(&samples)?;
-    debug!(
-        fields = arrow_schema.fields().len(),
-        field_names = ?arrow_schema.fields().iter().map(|f| f.name().as_str()).collect::<Vec<_>>(),
-        "inferred schema"
-    );
-
-    // Put samples in a shared queue so the provider's stream can emit them first.
-    let prefix = Arc::new(Mutex::new(VecDeque::from(samples)));
-
-    // Wrap remaining receiver so provider can pull from it.
-    let rx_arc = Arc::new(Mutex::new(rx));
-
-    // Stream factory: drain `prefix` first, then read from mpsc::Receiver.
-    let stream_factory = {
-        let prefix = Arc::clone(&prefix);
-        let rx_arc = Arc::clone(&rx_arc);
-        move || {
-            let prefix = Arc::clone(&prefix);
-            let rx_arc = Arc::clone(&rx_arc);
-            async_stream::stream! {
-                loop {
-                    // 1) yield buffered samples first
-                    if let Some(v) = { prefix.lock().await.pop_front() } {
-                        yield Ok(v);
-                        continue;
-                    }
-
-                    // 2) then read from the channel
-                    let mut r = rx_arc.lock().await;
-                    match r.recv().await {
-                        Some(item) => {
-                            drop(r); // release lock before yield
-                            yield item;
-                        }
-                        None => break, // channel closed: end of stream
-                    }
+        // Move the ONLY sender into the task so the channel closes when done.
+        let _stream_task = tokio::spawn(async move {
+            let mut pinned = json_stream;
+            while let Some(item) = pinned.next().await {
+                // If the receiver is gone, stop.
+                if tx.send(item).await.is_err() {
+                    break;
                 }
             }
-            .boxed()
+            // tx dropped here -> rx will eventually return None
+        });
+
+        // --------- Sample for schema (and keep the samples) ---------
+        let mut samples: Vec<serde_json::Value> = Vec::new();
+
+        while samples.len() < 100 {
+            match rx.recv().await {
+                Some(Ok(v)) => samples.push(v),
+                Some(Err(e)) => {
+                    // propagate upstream error
+                    return Err(e);
+                }
+                None => break, // producer finished
+            }
         }
-    };
 
-    // Create table provider with schema
-    let table_provider = JsonStreamTableProvider::new(Arc::new(stream_factory), arrow_schema);
+        if samples.is_empty() {
+            info!("Stream empty. Exit");
+            return Ok(());
+        }
 
-    // Use a unique table name to avoid conflicts in shared context
-    // Use only alphanumeric characters to avoid SQL parsing issues
-    let alphabet: [char; 36] = [
-        '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
-        'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j',
-        'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't',
-        'u', 'v', 'w', 'x', 'y', 'z',
-    ];
-    let unique_id = nanoid::nanoid!(10, &alphabet);
-    let unique_table_name = format!("{}_{}", self.table_name, unique_id);
-    
-    // Deregister table if it exists from previous runs (best effort)
-    let _ = ctx.deregister_table(&unique_table_name);
-    
-    ctx.register_table(unique_table_name.clone(), Arc::new(table_provider))?;
+        let arrow_schema = infer_schema_from_values(&samples)?;
+        debug!(
+            fields = arrow_schema.fields().len(),
+            field_names = ?arrow_schema.fields().iter().map(|f| f.name().as_str()).collect::<Vec<_>>(),
+            "inferred schema"
+        );
 
-    // Replace the original table name in SQL with the unique table name
-    let sql_with_unique_table = self.sql.replace(&self.table_name, &unique_table_name);
-    
-    let df = ctx.sql(&sql_with_unique_table).await?;
+        // Put samples in a shared queue so the provider's stream can emit them first.
+        let prefix = Arc::new(Mutex::new(VecDeque::from(samples)));
 
-    // Execute query and get streaming results
-    let record_batch_stream = df.execute_stream().await?;
-    
-    // Convert RecordBatch stream to JSON stream for the writer
-    let json_value_stream = convert_record_batch_to_json(record_batch_stream);
+        // Wrap remaining receiver so provider can pull from it.
+        let rx_arc = Arc::new(Mutex::new(rx));
 
-    // Write the streaming results to the final destination
-    self.final_writer
-        .write_stream(
-            QueryResultStream {
-                table_name: self.table_name.clone(),
-                data: json_value_stream,
-            },
-            _write_mode,
-        )
-        .await?;
+        // Stream factory: drain `prefix` first, then read from mpsc::Receiver.
+        let stream_factory = {
+            let prefix = Arc::clone(&prefix);
+            let rx_arc = Arc::clone(&rx_arc);
+            move || {
+                let prefix = Arc::clone(&prefix);
+                let rx_arc = Arc::clone(&rx_arc);
+                async_stream::stream! {
+                    loop {
+                        // 1) yield buffered samples first
+                        if let Some(v) = { prefix.lock().await.pop_front() } {
+                            yield Ok(v);
+                            continue;
+                        }
 
-    // Clean up: deregister the table
-    let _ = ctx.deregister_table(&unique_table_name);
+                        // 2) then read from the channel
+                        let mut r = rx_arc.lock().await;
+                        match r.recv().await {
+                            Some(item) => {
+                                drop(r); // release lock before yield
+                                yield item;
+                            }
+                            None => break, // channel closed: end of stream
+                        }
+                    }
+                }
+                .boxed()
+            }
+        };
 
-    Ok(())
-}
+        // Create table provider with schema
+        let table_provider = JsonStreamTableProvider::new(Arc::new(stream_factory), arrow_schema);
+
+        // Use a unique table name to avoid conflicts in shared context
+        // Use only alphanumeric characters to avoid SQL parsing issues
+        let alphabet: [char; 36] = [
+            '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f', 'g',
+            'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x',
+            'y', 'z',
+        ];
+        let unique_id = nanoid::nanoid!(10, &alphabet);
+        let unique_table_name = format!("{}_{}", self.table_name, unique_id);
+
+        // Deregister table if it exists from previous runs (best effort)
+        let _ = ctx.deregister_table(&unique_table_name);
+
+        ctx.register_table(unique_table_name.clone(), Arc::new(table_provider))?;
+
+        // Replace the original table name in SQL with the unique table name
+        let sql_with_unique_table = self.sql.replace(&self.table_name, &unique_table_name);
+
+        let df = ctx.sql(&sql_with_unique_table).await?;
+
+        // Execute query and get streaming results
+        let record_batch_stream = df.execute_stream().await?;
+
+        // Convert RecordBatch stream to JSON stream for the writer
+        let json_value_stream = convert_record_batch_to_json(record_batch_stream);
+
+        // Write the streaming results to the final destination
+        self.final_writer
+            .write_stream(
+                QueryResultStream {
+                    table_name: self.table_name.clone(),
+                    data: json_value_stream,
+                },
+                _write_mode,
+            )
+            .await?;
+
+        // Clean up: deregister the table
+        let _ = ctx.deregister_table(&unique_table_name);
+
+        Ok(())
+    }
     async fn commit(&self) -> Result<()> {
         self.final_writer.commit().await
     }
@@ -898,6 +901,40 @@ fn arrow_value_to_json(
             Ok(serde_json::Value::String(
                 array.value(row_index).to_string(),
             ))
+        }
+        arrow::datatypes::DataType::Struct(fields) => {
+            let array = column.as_any().downcast_ref::<StructArray>().unwrap();
+            let mut obj = serde_json::Map::new();
+
+            for (i, field) in fields.iter().enumerate() {
+                let col = array.column(i);
+                let value = arrow_value_to_json(col, row_index)?;
+                obj.insert(field.name().clone(), value);
+            }
+
+            Ok(serde_json::Value::Object(obj))
+        }
+        arrow::datatypes::DataType::List(_field) => {
+            let array = column.as_any().downcast_ref::<ListArray>().unwrap();
+            let list = array.value(row_index);
+            let mut arr = Vec::new();
+
+            for i in 0..list.len() {
+                arr.push(arrow_value_to_json(&list, i)?);
+            }
+
+            Ok(serde_json::Value::Array(arr))
+        }
+        arrow::datatypes::DataType::LargeList(_field) => {
+            let array = column.as_any().downcast_ref::<LargeListArray>().unwrap();
+            let list = array.value(row_index);
+            let mut arr = Vec::new();
+
+            for i in 0..list.len() {
+                arr.push(arrow_value_to_json(&list, i)?);
+            }
+
+            Ok(serde_json::Value::Array(arr))
         }
         other => {
             warn!("Unsupported Arrow type: {:?}, converting to null", other);

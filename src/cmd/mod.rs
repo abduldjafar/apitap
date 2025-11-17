@@ -3,14 +3,14 @@ use std::time::Instant;
 
 use crate::config::load_config_from_path;
 use crate::config::templating::{
-    RenderCapture, build_env_with_captures, list_sql_templates, render_one,
+    build_env_with_captures, list_sql_templates, render_one, RenderCapture,
 };
 use crate::errors::{self, Result};
-use crate::http::Http;
 use crate::http::fetcher::Pagination;
-use crate::pipeline::SinkConn;
-use crate::pipeline::run::{FetchOpts, run_fetch};
+use crate::http::Http;
+use crate::pipeline::run::{run_fetch, FetchOpts};
 use crate::pipeline::sink::{MakeWriter, WriterOpts};
+use crate::pipeline::SinkConn;
 use crate::writer::WriteMode;
 use clap::Parser;
 use tracing::{debug, info, instrument, warn};
@@ -124,7 +124,14 @@ pub async fn run_pipeline(root: &str, cfg_path: &str) -> Result<()> {
         };
 
         // HTTP client
-        let http = Http::new(src.url.clone());
+        let mut http = Http::new(src.url.clone());
+
+        if let Some(header_from_cfg) = src.headers.clone() {
+            for header in header_from_cfg {
+                http = http.header(header.key, header.value);
+            }
+        }
+
         let client = http.build_client();
         let url_s = http.get_url();
         let url = reqwest::Url::parse(&url_s)?;
@@ -141,7 +148,7 @@ pub async fn run_pipeline(root: &str, cfg_path: &str) -> Result<()> {
         // Target writer via factory
         let writer_opts = WriterOpts {
             dest_table,
-            primary_key: Some("id".to_string()),
+            primary_key: src.primary_key_in_dest.clone(),
             batch_size: 50,
             sample_size: 10,
             auto_create: true,
@@ -158,12 +165,17 @@ pub async fn run_pipeline(root: &str, cfg_path: &str) -> Result<()> {
         }
 
         info!("───────────────────────────────────────────────────────────");
-        info!("📋 Module: {} | Source: {} → Table: {}", name, source_name, dest_table);
+        info!(
+            "📋 Module: {} | Source: {} → Table: {}",
+            name, source_name, dest_table
+        );
         info!("🔄 Starting ETL Pipeline...");
         let step_t0 = Instant::now();
         let stats = run_fetch(
             client,
             url,
+            src.data_path.clone(),
+            src.query_params.clone(),
             &src.pagination,
             &sql,
             dest_table,
@@ -174,8 +186,9 @@ pub async fn run_pipeline(root: &str, cfg_path: &str) -> Result<()> {
         )
         .await?;
 
-        info!("✅ Module Completed | Records: {} | Duration: {}ms", 
-            stats.total_items, 
+        info!(
+            "✅ Module Completed | Records: {} | Duration: {}ms",
+            stats.total_items,
             step_t0.elapsed().as_millis()
         );
     }
