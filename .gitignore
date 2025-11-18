@@ -29,3 +29,4 @@ testing.sql
 pipelines
 flamegraph*
 pipelines.yaml
+*.txt
