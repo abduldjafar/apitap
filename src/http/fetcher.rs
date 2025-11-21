@@ -388,7 +388,6 @@ impl PaginatedFetcher {
             if let Some(arr) = first_json.pointer(p).and_then(|v| v.as_array()).cloned() {
                 let n = arr.len();
                 writer.write_page(1, arr, write_mode.clone()).await?;
-                info!(page = 1, items = n, source = %self.base_url, "wrote first page (json array path)");
                 stats.add_page(1, n);
                 wrote_first = true;
             }
@@ -522,7 +521,6 @@ impl PaginatedFetcher {
                 let wrote = self
                     .write_streamed_page(page, s, &*writer, &mut stats, write_mode.clone())
                     .await?;
-                info!(page = page, items = wrote, source = %self.base_url, "wrote page (unknown total)");
                 if wrote == 0 {
                     break;
                 } // stop on empty page
@@ -631,7 +629,6 @@ impl PageWriter for DataFusionPageWriter {
         let result_stream = sdf.inner().to_stream().await?;
         // Use structured fields for the downstream writer call
         let table_page = format!("{}_page_{}", self.table_name, page_number);
-        info!(table = %self.table_name, table_page = %table_page, items = items, "transform -> load: writing page");
         self.final_writer
             .write_stream(
                 QueryResultStream {

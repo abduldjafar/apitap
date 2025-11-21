@@ -90,6 +90,64 @@ pub struct PostgresWriter {
     pub auto_truncate: bool,
     columns_cache: tokio::sync::RwLock<Option<BTreeMap<String, PgType>>>,
     pub primary_key: Option<String>,
+    version_cache: tokio::sync::RwLock<Option<PostgresVersion>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct PostgresVersion {
+    pub major: u32,
+    pub minor: u32,
+}
+
+impl PostgresVersion {
+    pub fn new(major: u32, minor: u32) -> Self {
+        Self { major, minor }
+    }
+
+    pub fn supports_merge(&self) -> bool {
+        self.major >= 15
+    }
+
+    pub fn supports_upsert(&self) -> bool {
+        // INSERT ... ON CONFLICT is available since PostgreSQL 9.5
+        self.major >= 9 && (self.major > 9 || self.minor >= 5)
+    }
+
+    pub fn parse(version_str: &str) -> Result<Self> {
+        // PostgreSQL version string format: "PostgreSQL X.Y.Z on ..."
+        // or "X.Y.Z" or just "X.Y"
+        let version_part = version_str
+            .split_whitespace()
+            .find(|s| s.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false))
+            .or_else(|| version_str.split_whitespace().nth(1))
+            .unwrap_or(version_str);
+
+        let parts: Vec<&str> = version_part.split('.').collect();
+        if parts.is_empty() {
+            return Err(ApitapError::PipelineError(format!(
+                "Invalid PostgreSQL version format: {}",
+                version_str
+            )));
+        }
+
+        let major = parts[0].parse::<u32>().map_err(|_| {
+            ApitapError::PipelineError(format!("Invalid major version: {}", parts[0]))
+        })?;
+
+        let minor = if parts.len() > 1 {
+            parts[1].parse::<u32>().unwrap_or(0)
+        } else {
+            0
+        };
+
+        Ok(Self { major, minor })
+    }
+}
+
+impl std::fmt::Display for PostgresVersion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}.{}", self.major, self.minor)
+    }
 }
 
 impl PostgresWriter {
@@ -103,6 +161,7 @@ impl PostgresWriter {
             auto_truncate: false,
             columns_cache: tokio::sync::RwLock::new(None),
             primary_key: None,
+            version_cache: tokio::sync::RwLock::new(None),
         }
     }
 
@@ -276,6 +335,32 @@ impl PostgresWriter {
         Ok(schema)
     }
 
+    /// Fetch and cache the PostgreSQL server version
+    pub async fn get_postgres_version(&self) -> Result<PostgresVersion> {
+        // Check cache first
+        if let Some(version) = *self.version_cache.read().await {
+            return Ok(version);
+        }
+
+        // Fetch version from database
+        let version_row: (String,) = sqlx::query_as("SELECT version()")
+            .fetch_one(&self.pool)
+            .await?;
+
+        let version = PostgresVersion::parse(&version_row.0)?;
+        
+        // Cache the version
+        *self.version_cache.write().await = Some(version);
+        
+        tracing::info!(
+            version = %version,
+            supports_merge = version.supports_merge(),
+            "detected PostgreSQL version"
+        );
+
+        Ok(version)
+    }
+
     pub async fn truncate(&self) -> Result<()> {
         let table_sql = Self::quote_ident(&self.table_name);
         let sql = format!("TRUNCATE TABLE {}", table_sql);
@@ -305,7 +390,147 @@ impl PostgresWriter {
         }
     }
 
+    /// Upsert batch using INSERT ... ON CONFLICT DO UPDATE (PostgreSQL 9.5+)
+    /// This is used for PostgreSQL versions < 15 that don't support MERGE
+    pub async fn upsert_batch(
+        &self,
+        rows: &[Value],
+        schema: &BTreeMap<String, PgType>,
+    ) -> Result<()> {
+        // ---- Guards ------------------------------------------------------------
+        if rows.is_empty() {
+            info!(table = %self.table_name, "upsert_batch: no rows to upsert; skipping");
+            return Ok(());
+        }
+        if schema.is_empty() {
+            return Err(ApitapError::MergeError("No columns detected".to_string()));
+        }
+
+        let pk_name = self.primary_key.clone().ok_or_else(|| {
+            ApitapError::MergeError("Postgres: primary key not configured".to_string())
+        })?;
+
+        // Column lists (BTreeMap keeps stable order)
+        let col_names_raw: Vec<&str> = schema.keys().map(|s| s.as_str()).collect();
+        let values_per_row = col_names_raw.len();
+        let col_names_sql: Vec<String> =
+            col_names_raw.iter().map(|n| Self::quote_ident(n)).collect();
+
+        let columns_str = col_names_sql.join(", ");
+
+        // Build placeholders for VALUES
+        let mut placeholders = Vec::with_capacity(rows.len());
+        for row_idx in 0..rows.len() {
+            let row_ph: Vec<String> = (1..=values_per_row)
+                .map(|col_idx| format!("${}", row_idx * values_per_row + col_idx))
+                .collect();
+            placeholders.push(format!("({})", row_ph.join(", ")));
+        }
+
+        let table_sql = Self::quote_ident_path(&self.table_name);
+        let pk_quoted = Self::quote_ident(&pk_name);
+
+        // Determine non-PK columns for UPDATE clause
+        let non_pk_cols: Vec<&str> = col_names_raw
+            .iter()
+            .filter(|c| **c != pk_name.as_str())
+            .copied()
+            .collect();
+
+        // Build UPDATE SET clause: "col" = EXCLUDED."col"
+        let update_set = if non_pk_cols.is_empty() {
+            // If only PK, do nothing on conflict (just ensures uniqueness)
+            "".to_string()
+        } else {
+            let assignments: Vec<String> = non_pk_cols
+                .iter()
+                .map(|col| {
+                    format!(
+                        "{} = EXCLUDED.{}",
+                        Self::quote_ident(col),
+                        Self::quote_ident(col)
+                    )
+                })
+                .collect();
+            format!("DO UPDATE SET {}", assignments.join(", "))
+        };
+
+        let conflict_clause = if non_pk_cols.is_empty() {
+            format!("ON CONFLICT ({}) DO NOTHING", pk_quoted)
+        } else {
+            format!("ON CONFLICT ({}) {}", pk_quoted, update_set)
+        };
+
+        let query = format!(
+            "INSERT INTO {} ({}) VALUES {} {}",
+            table_sql,
+            columns_str,
+            placeholders.join(", "),
+            conflict_clause
+        );
+
+        debug!(
+            table = %table_sql,
+            pk = %pk_name,
+            rows = rows.len(),
+            cols = values_per_row,
+            will_update_cols = non_pk_cols.len(),
+            "UPSERT batch details"
+        );
+        debug!(%query, "UPSERT SQL");
+
+        // Bind values
+        let mut all_values = Vec::with_capacity(rows.len() * values_per_row);
+        for row in rows {
+            for col in &col_names_raw {
+                all_values.push(row.get(*col).cloned().unwrap_or(Value::Null));
+            }
+        }
+
+        let mut q = sqlx::query(&query);
+        for (idx, value) in all_values.iter().enumerate() {
+            let col_idx = idx % values_per_row;
+            let col_name = col_names_raw[col_idx];
+            let expected = schema
+                .get(col_name)
+                .expect("schema must contain column present in rows");
+            q = self.bind_value(q, value, expected)?;
+        }
+
+        // Execute
+        let span = debug_span!("sql.execute", statement = "upsert", table = %self.table_name, batch_rows = rows.len());
+        let _g = span.enter();
+        let res = q.execute(&self.pool).await?;
+        debug!(rows_affected = res.rows_affected(), "upsert executed");
+
+        Ok(())
+    }
+
     pub async fn merge_batch(
+        &self,
+        rows: &[Value],
+        schema: &BTreeMap<String, PgType>,
+    ) -> Result<()> {
+        // ---- Version Detection -------------------------------------------------
+        // Choose implementation based on PostgreSQL version
+        let version = self.get_postgres_version().await?;
+        
+        if version.supports_merge() {
+            // Use MERGE for PostgreSQL 15+
+            return self.merge_batch_pg15(rows, schema).await;
+        } else if version.supports_upsert() {
+            // Use INSERT ... ON CONFLICT for PostgreSQL 9.5-14
+            return self.upsert_batch(rows, schema).await;
+        } else {
+            return Err(ApitapError::MergeError(format!(
+                "Merge operation requires PostgreSQL 9.5 or higher (detected version: {})",
+                version
+            )));
+        }
+    }
+
+    /// MERGE implementation for PostgreSQL 15+ 
+    async fn merge_batch_pg15(
         &self,
         rows: &[Value],
         schema: &BTreeMap<String, PgType>,
