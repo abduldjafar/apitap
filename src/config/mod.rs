@@ -16,8 +16,11 @@ fn validate_credentials(cfg: &PipelineConfig) -> Result<()> {
                 }
                 if has_env_keys {
                     // Ensure referenced env vars exist and are non-empty
-                    let u_key = auth.username_env.as_ref().unwrap();
-                    let p_key = auth.password_env.as_ref().unwrap();
+                    // Safe: checked by has_env_keys = username_env.is_some() && password_env.is_some()
+                    let u_key = auth.username_env.as_ref()
+                        .expect("username_env is Some, checked by has_env_keys guard");
+                    let p_key = auth.password_env.as_ref()
+                        .expect("password_env is Some, checked by has_env_keys guard");
                     let u_val = env::var(u_key).map_err(|_| {
                         crate::errors::ApitapError::ConfigError(format!(
                             "environment variable '{}' for postgres username not set",

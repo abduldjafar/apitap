@@ -48,9 +48,16 @@ pub async fn run_fetch(
                 .with_limit_offset(limit_param, offset_param)
                 .with_batch_size(opts.fetch_batch_size);
 
+            let page_size: u64 = opts.default_page_size.try_into().map_err(|_| {
+                ApitapError::ConfigError(format!(
+                    "Invalid page size: {} (must fit in u64)",
+                    opts.default_page_size
+                ))
+            })?;
+
             let stats = fetcher
                 .fetch_limit_offset(
-                    opts.default_page_size.try_into().unwrap(),
+                    page_size,
                     data_path,
                     Some(&extra_params_vec),
                     None,
@@ -72,9 +79,16 @@ pub async fn run_fetch(
                 .with_batch_size(opts.fetch_batch_size)
                 .with_page_number(page_param, per_page_param);
 
+            let per_page: u64 = opts.default_page_size.try_into().map_err(|_| {
+                ApitapError::ConfigError(format!(
+                    "Invalid page size: {} (must fit in u64)",
+                    opts.default_page_size
+                ))
+            })?;
+
             let stats = fetcher
                 .fetch_page_number(
-                    opts.default_page_size.try_into().unwrap(),
+                    per_page,
                     data_path.as_deref(),
                     None,
                     page_writer,

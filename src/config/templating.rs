@@ -34,7 +34,7 @@ pub fn build_env_with_captures(
             "sink",
             move |kwargs: Kwargs| -> std::result::Result<Value, MjError> {
                 let name: String = kwargs.get("name")?;
-                let mut c = cap.lock().unwrap();
+                let mut c = cap.lock().expect("RenderCapture mutex poisoned - this indicates a panic occurred while holding the lock");
                 c.sink = name;
                 Ok(Value::from(""))
             },
@@ -47,7 +47,7 @@ pub fn build_env_with_captures(
         env.add_function(
             "use_source",
             move |name: String| -> std::result::Result<Value, MjError> {
-                let mut c = cap.lock().unwrap();
+                let mut c = cap.lock().expect("RenderCapture mutex poisoned - this indicates a panic occurred while holding the lock");
                 c.source = name.clone();
                 Ok(Value::from(name))
             },
@@ -63,7 +63,9 @@ pub fn render_one(
     name: &str,
 ) -> Result<RenderedSql> {
     {
-        let mut c = shared_cap.lock().unwrap();
+        let mut c = shared_cap.lock().expect(
+            "RenderCapture mutex poisoned - this indicates a panic occurred while holding the lock",
+        );
         c.sink.clear();
         c.source.clear();
     }
@@ -71,7 +73,12 @@ pub fn render_one(
     let tmpl = env.get_template(name)?;
     let sql = tmpl.render(())?;
 
-    let capture = shared_cap.lock().unwrap().clone();
+    let capture = shared_cap
+        .lock()
+        .expect(
+            "RenderCapture mutex poisoned - this indicates a panic occurred while holding the lock",
+        )
+        .clone();
     Ok(RenderedSql {
         name: name.to_string(),
         sql,

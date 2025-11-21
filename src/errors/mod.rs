@@ -75,6 +75,9 @@ pub enum ApitapError {
     #[error("Merge Error: {0}")]
     MergeError(String),
 
+    #[error("Data Type Error: {0}")]
+    DataTypeError(String),
+
     #[error("Tracing From Env Error: {0}")]
     FromEnvError(#[from] FromEnvError),
 

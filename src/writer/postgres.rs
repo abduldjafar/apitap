@@ -118,7 +118,12 @@ impl PostgresVersion {
         // or "X.Y.Z" or just "X.Y"
         let version_part = version_str
             .split_whitespace()
-            .find(|s| s.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false))
+            .find(|s| {
+                s.chars()
+                    .next()
+                    .map(|c| c.is_ascii_digit())
+                    .unwrap_or(false)
+            })
             .or_else(|| version_str.split_whitespace().nth(1))
             .unwrap_or(version_str);
 
@@ -348,10 +353,10 @@ impl PostgresWriter {
             .await?;
 
         let version = PostgresVersion::parse(&version_row.0)?;
-        
+
         // Cache the version
         *self.version_cache.write().await = Some(version);
-        
+
         tracing::info!(
             version = %version,
             supports_merge = version.supports_merge(),
@@ -514,7 +519,7 @@ impl PostgresWriter {
         // ---- Version Detection -------------------------------------------------
         // Choose implementation based on PostgreSQL version
         let version = self.get_postgres_version().await?;
-        
+
         if version.supports_merge() {
             // Use MERGE for PostgreSQL 15+
             return self.merge_batch_pg15(rows, schema).await;
@@ -529,7 +534,7 @@ impl PostgresWriter {
         }
     }
 
-    /// MERGE implementation for PostgreSQL 15+ 
+    /// MERGE implementation for PostgreSQL 15+
     async fn merge_batch_pg15(
         &self,
         rows: &[Value],
