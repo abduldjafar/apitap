@@ -66,11 +66,13 @@ See detailed performance analysis in:
 
 ## ⚠️ Status
 
-> **Active development - Production ready with caveats**
+> **Active development - Production ready**
 
-- Currently **tested with PostgreSQL 17+**  
-- Target compatibility is **PostgreSQL 14+**  
-  - Plan: fall back to `ON CONFLICT` for PG \< 15 instead of `MERGE`  
+- ✅ **PostgreSQL 14-17 fully supported**  
+  - Automatic version detection and method selection
+  - PostgreSQL 15+: Uses native `MERGE` statements
+  - PostgreSQL 9.5-14: Falls back to `INSERT ... ON CONFLICT DO UPDATE`
+  - PostgreSQL <9.5: Clear error message with upgrade recommendation
 - Core features are stable, but expect some API changes
 - Feedback, bug reports, and PRs are very welcome!
 
@@ -505,11 +507,11 @@ Watch the structured logs for:
 
 **Postgres Compatibility**
 
-* [x] Tested on PostgreSQL 17+
-* [x] Tested on PostgreSQL 16
-* [ ] Verified on PostgreSQL 15
-* [ ] Compatibility layer for PostgreSQL 14+
-  * Fall back to `ON CONFLICT` when `MERGE` isn't available
+* [x] PostgreSQL 14-17 fully supported
+* [x] Automatic version detection and method selection
+* [x] PostgreSQL 15+: Native `MERGE` statements
+* [x] PostgreSQL 9.5-14: `INSERT ... ON CONFLICT DO UPDATE`
+* [x] Version caching with RwLock for performance
 
 **Performance** (Ongoing)
 
