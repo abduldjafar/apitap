@@ -854,53 +854,90 @@ fn arrow_value_to_json(
     match column.data_type() {
         arrow::datatypes::DataType::Null => Ok(serde_json::Value::Null),
         arrow::datatypes::DataType::Boolean => {
-            let array = column.as_any().downcast_ref::<BooleanArray>().unwrap();
+            let array = column
+                .as_any()
+                .downcast_ref::<BooleanArray>()
+                .ok_or_else(|| ApitapError::DataTypeError("Expected BooleanArray".to_string()))?;
             Ok(serde_json::Value::Bool(array.value(row_index)))
         }
         arrow::datatypes::DataType::Int64 => {
-            let array = column.as_any().downcast_ref::<Int64Array>().unwrap();
+            let array = column
+                .as_any()
+                .downcast_ref::<Int64Array>()
+                .ok_or_else(|| ApitapError::DataTypeError("Expected Int64Array".to_string()))?;
             Ok(serde_json::json!(array.value(row_index)))
         }
         arrow::datatypes::DataType::Int32 => {
-            let array = column.as_any().downcast_ref::<Int32Array>().unwrap();
+            let array = column
+                .as_any()
+                .downcast_ref::<Int32Array>()
+                .ok_or_else(|| ApitapError::DataTypeError("Expected Int32Array".to_string()))?;
             Ok(serde_json::json!(array.value(row_index) as i64))
         }
         arrow::datatypes::DataType::UInt64 => {
-            let array = column.as_any().downcast_ref::<UInt64Array>().unwrap();
+            let array = column
+                .as_any()
+                .downcast_ref::<UInt64Array>()
+                .ok_or_else(|| ApitapError::DataTypeError("Expected UInt64Array".to_string()))?;
             Ok(serde_json::json!(array.value(row_index)))
         }
         arrow::datatypes::DataType::UInt32 => {
-            let array = column.as_any().downcast_ref::<UInt32Array>().unwrap();
+            let array = column
+                .as_any()
+                .downcast_ref::<UInt32Array>()
+                .ok_or_else(|| ApitapError::DataTypeError("Expected UInt32Array".to_string()))?;
             Ok(serde_json::json!(array.value(row_index) as u64))
         }
         arrow::datatypes::DataType::Float64 => {
-            let array = column.as_any().downcast_ref::<Float64Array>().unwrap();
+            let array = column
+                .as_any()
+                .downcast_ref::<Float64Array>()
+                .ok_or_else(|| ApitapError::DataTypeError("Expected Float64Array".to_string()))?;
             Ok(serde_json::json!(array.value(row_index)))
         }
         arrow::datatypes::DataType::Float32 => {
-            let array = column.as_any().downcast_ref::<Float32Array>().unwrap();
+            let array = column
+                .as_any()
+                .downcast_ref::<Float32Array>()
+                .ok_or_else(|| ApitapError::DataTypeError("Expected Float32Array".to_string()))?;
             Ok(serde_json::json!(array.value(row_index) as f64))
         }
         arrow::datatypes::DataType::Utf8 => {
-            let array = column.as_any().downcast_ref::<StringArray>().unwrap();
+            let array = column
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .ok_or_else(|| ApitapError::DataTypeError("Expected StringArray".to_string()))?;
             Ok(serde_json::Value::String(
                 array.value(row_index).to_string(),
             ))
         }
         arrow::datatypes::DataType::LargeUtf8 => {
-            let array = column.as_any().downcast_ref::<LargeStringArray>().unwrap();
+            let array = column
+                .as_any()
+                .downcast_ref::<LargeStringArray>()
+                .ok_or_else(|| {
+                    ApitapError::DataTypeError("Expected LargeStringArray".to_string())
+                })?;
             Ok(serde_json::Value::String(
                 array.value(row_index).to_string(),
             ))
         }
         arrow::datatypes::DataType::Utf8View => {
-            let array = column.as_any().downcast_ref::<StringViewArray>().unwrap();
+            let array = column
+                .as_any()
+                .downcast_ref::<StringViewArray>()
+                .ok_or_else(|| {
+                    ApitapError::DataTypeError("Expected StringViewArray".to_string())
+                })?;
             Ok(serde_json::Value::String(
                 array.value(row_index).to_string(),
             ))
         }
         arrow::datatypes::DataType::Struct(fields) => {
-            let array = column.as_any().downcast_ref::<StructArray>().unwrap();
+            let array = column
+                .as_any()
+                .downcast_ref::<StructArray>()
+                .ok_or_else(|| ApitapError::DataTypeError("Expected StructArray".to_string()))?;
             let mut obj = serde_json::Map::new();
 
             for (i, field) in fields.iter().enumerate() {
@@ -912,7 +949,10 @@ fn arrow_value_to_json(
             Ok(serde_json::Value::Object(obj))
         }
         arrow::datatypes::DataType::List(_field) => {
-            let array = column.as_any().downcast_ref::<ListArray>().unwrap();
+            let array = column
+                .as_any()
+                .downcast_ref::<ListArray>()
+                .ok_or_else(|| ApitapError::DataTypeError("Expected ListArray".to_string()))?;
             let list = array.value(row_index);
             let mut arr = Vec::new();
 
@@ -923,7 +963,10 @@ fn arrow_value_to_json(
             Ok(serde_json::Value::Array(arr))
         }
         arrow::datatypes::DataType::LargeList(_field) => {
-            let array = column.as_any().downcast_ref::<LargeListArray>().unwrap();
+            let array = column
+                .as_any()
+                .downcast_ref::<LargeListArray>()
+                .ok_or_else(|| ApitapError::DataTypeError("Expected LargeListArray".to_string()))?;
             let list = array.value(row_index);
             let mut arr = Vec::new();
 

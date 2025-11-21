@@ -47,10 +47,16 @@ impl Http {
             }
         }
         if let Some(token) = &self.bearer_auth {
-            headers.insert(
-                reqwest::header::AUTHORIZATION,
-                reqwest::header::HeaderValue::from_str(&format!("Bearer {}", token)).unwrap(),
-            );
+            match reqwest::header::HeaderValue::from_str(&format!("Bearer {}", token)) {
+                Ok(header_value) => {
+                    headers.insert(reqwest::header::AUTHORIZATION, header_value);
+                }
+                Err(_) => {
+                    // Token contains invalid header characters, skip adding the header
+                    // This prevents panic while still allowing the client to be built
+                    eprintln!("Warning: Invalid characters in bearer token, skipping authorization header");
+                }
+            }
         }
 
         Client::builder()
