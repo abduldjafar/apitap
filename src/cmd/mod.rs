@@ -15,9 +15,9 @@ use crate::writer::WriteMode;
 use clap::Parser;
 use tracing::{debug, info, instrument, warn};
 
-const CONCURRENCY: usize = 5;
+const CONCURRENCY: usize = 2; // Reduced for low cpu usage
 const DEFAULT_PAGE_SIZE: usize = 50;
-const FETCH_BATCH_SIZE: usize = 256;
+const FETCH_BATCH_SIZE: usize = 100; // Reduced for low memory usage
 
 /// CLI
 #[derive(Parser, Debug)]
@@ -149,7 +149,7 @@ pub async fn run_pipeline(root: &str, cfg_path: &str) -> Result<()> {
         let writer_opts = WriterOpts {
             dest_table,
             primary_key: src.primary_key_in_dest.clone(),
-            batch_size: 50,
+            batch_size: 500, // Matched with Postgres default
             sample_size: 10,
             auto_create: true,
             auto_truncate: false,
