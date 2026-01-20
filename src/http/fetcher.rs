@@ -649,8 +649,8 @@ impl PageWriter for DataFusionPageWriter {
         debug!("starting streaming pipeline");
         let ctx = get_shared_context().await;
 
-        // Single-producer, single-consumer channel with increased buffer for better throughput
-        let (tx, mut rx) = tokio::sync::mpsc::channel::<Result<serde_json::Value>>(8192);
+        // Single-producer, single-consumer channel with reduced buffer for low-memory environments
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<Result<serde_json::Value>>(128);
 
         // Move the ONLY sender into the task so the channel closes when done.
         let _stream_task = tokio::spawn(async move {

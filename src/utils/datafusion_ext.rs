@@ -27,7 +27,8 @@ pub type JsonStreamType = Pin<Box<dyn Stream<Item = Result<serde_json::Value>> +
 pub async fn get_shared_context() -> Arc<SessionContext> {
     SHARED_CTX
         .get_or_init(|| async {
-            const MEM_LIMIT: usize = 256 * 1024 * 1024;
+            // Reduced to 80MB to fit within 128MB container limits
+            const MEM_LIMIT: usize = 80 * 1024 * 1024;
             let setup_runtime_env = RuntimeEnvBuilder::new()
                 .with_memory_pool(Arc::new(GreedyMemoryPool::new(MEM_LIMIT)))
                 .build();
